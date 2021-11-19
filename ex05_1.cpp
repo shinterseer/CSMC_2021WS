@@ -7,7 +7,8 @@
 #include <vector>
 #include <algorithm>
  
-
+#define GRID_SIZE 256
+#define BLOCK_SIZE 256
 
 __global__
 void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, double *dotp){
@@ -96,6 +97,16 @@ void gpu_dotp8_wshuffle(const double *x, double * const *y, const size_t size, d
 }
 
 
+void cpu_loop_call(double *cuda_x, double **cuda_y, double *gpu_results, int N, int K){
+	// run my kernel
+	int call_times = int(K/8);
+	for(int i = 0; i < call_times; i++){
+		gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, &cuda_y[8*i], N, &gpu_results[8*i]);	
+	}
+	
+}
+
+
 // __________________________ Toolbox _____________________________________
 // ________________________________________________________________________
 
@@ -165,100 +176,108 @@ double execution_wrapper(int grid_size,
 
 int main(void)
 {
-    const size_t N = 100000;
-    const size_t K = 32;
+	//bool test_results = false;
+	
+	const size_t N = 100000;
+	const size_t K = 32;
 
-    //
-    // Initialize CUBLAS:
-    //
-    std::cout << "Init CUBLAS..." << std::endl;
-    cublasHandle_t h;
-    cublasCreate(&h);
-
-
-    //
-    // allocate host memory:
-    //
-    std::cout << "Allocating host arrays..." << std::endl;
-    double  *x = (double*)malloc(sizeof(double) * N);
-    double **y = (double**)malloc(sizeof(double*) * K);
-    for (size_t i=0; i<K; ++i) {
-      y[i] = (double*)malloc(sizeof(double) * N);
-    }
-    double *results  = (double*)malloc(sizeof(double) * K);
-    double *results2 = (double*)malloc(sizeof(double) * K);
+	//
+	// Initialize CUBLAS:
+	//
+	std::cout << "Init CUBLAS..." << std::endl;
+	cublasHandle_t h;
+	cublasCreate(&h);
 
 
-    //
-    // allocate device memory
-    //
-    std::cout << "Allocating CUDA arrays..." << std::endl;
-    double *cuda_x; cudaMalloc( (void **)(&cuda_x), sizeof(double)*N);
-    double **cuda_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
-    for (size_t i=0; i<K; ++i) {
-      cudaMalloc( (void **)(&cuda_y[i]), sizeof(double)*N);
-    }
+	//
+	// allocate host memory:
+	//
+	std::cout << "Allocating host arrays..." << std::endl;
+	double  *x = (double*)malloc(sizeof(double) * N);
+	double **y = (double**)malloc(sizeof(double*) * K);
+	for (size_t i=0; i<K; ++i) {
+		y[i] = (double*)malloc(sizeof(double) * N);
+	}
+	double *results_ref  = (double*)malloc(sizeof(double) * K);
+	double *results = (double*)malloc(sizeof(double) * K);
 
-    // fill host arrays with values
-		cpu_init_vectors(x, y, N, K );
-			
-    // Reference calculation on CPU:
-		cpu_dotp(x, y, results, N, K);
+
+	//
+	// allocate device memory
+	//
+	std::cout << "Allocating CUDA arrays..." << std::endl;
+	double *cuda_x; cudaMalloc( (void **)(&cuda_x), sizeof(double)*N);
+	double **cuda_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
+	for (size_t i=0; i<K; ++i) {
+		cudaMalloc( (void **)(&cuda_y[i]), sizeof(double)*N);
+	}
+	double *gpu_results;
+	cudaMalloc(&gpu_results, K * sizeof(double));
+	
+	
+	// fill host arrays with values
+	cpu_init_vectors(x, y, N, K );
 		
-		
-    //
-    // Copy data to GPU
-    //
-    std::cout << "Copying data to GPU..." << std::endl;
-    cudaMemcpy(cuda_x, x, sizeof(double)*N, cudaMemcpyHostToDevice);
-    for (size_t i=0; i<K; ++i) {
-      cudaMemcpy(cuda_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
-    }
+	// Reference calculation on CPU:
+	cpu_dotp(x, y, results_ref, N, K);
+	
+	
+	//
+	// Copy data to GPU
+	//
+	std::cout << "Copying data to GPU..." << std::endl;
+	cudaMemcpy(cuda_x, x, sizeof(double)*N, cudaMemcpyHostToDevice);
+	for (size_t i=0; i<K; ++i) {
+		cudaMemcpy(cuda_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
+	}
 
-    //
-    // Let CUBLAS do the work:
-    //
-    for (size_t i=0; i<K; ++i)
-      results2[i] = 0;
-		
-    std::cout << "Running dot products with CUBLAS..." << std::endl;
-    for (size_t i=0; i<K; ++i) {
-      cublasDdot(h, N, cuda_x, 1, cuda_y[i], 1, results2 + i);
-    }
+	//
+	// Let CUBLAS do the work:
+	//
+	for (size_t i=0; i<K; ++i)
+		results[i] = 0;
+	
+	/*
+	std::cout << "Running dot products with CUBLAS..." << std::endl;
+	for (size_t i=0; i<K; ++i) {
+		cublasDdot(h, N, cuda_x, 1, cuda_y[i], 1, results + i);
+	}
+	*/
+	
+	
+	//cpu_loop_call(cuda_x, cuda_y, gpu_results, N, K);
+	
+	for( int i = 0; i < K; i++){
+		gpu_dotp_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, &(cuda_y[i][0]), N, &gpu_results[i]);
+	}
+	cudaMemcpy(results, gpu_results, K*sizeof(double), cudaMemcpyDeviceToHost);
 
-		// run my kernel
-		int call_times = int(K/8);
-		for(int i = 0; i < call_times; i++){
-			gpu_dotp8_wshuffle<<<256,256>>>(x, &y[8*i], N, &results2[8*i]);			
-		}
+	//
+	// Compare results
+	//
+	std::cout << "Copying results back to host..." << std::endl;
+	for (size_t i=0; i<K; ++i) {
+		std::cout << results_ref[i] << " on CPU, " << results[i] << " on GPU. Relative difference: " << fabs(results_ref[i] - results[i]) / results_ref[i] << std::endl;
+	}
 
+	
+	//
+	// Clean up:
+	//
+	std::cout << "Cleaning up..." << std::endl;
+	free(x);
+	cudaFree(cuda_x);
 
-    //
-    // Compare results
-    //
-    std::cout << "Copying results back to host..." << std::endl;
-    for (size_t i=0; i<K; ++i) {
-      std::cout << results[i] << " on CPU, " << results2[i] << " on GPU. Relative difference: " << fabs(results[i] - results2[i]) / results[i] << std::endl;
-    }
+	for (size_t i=0; i<K; ++i) {
+		free(y[i]);
+		cudaFree(cuda_y[i]);
+	}
+	free(y);
+	free(cuda_y);
 
-    
-    //
-    // Clean up:
-    //
-    std::cout << "Cleaning up..." << std::endl;
-    free(x);
-    cudaFree(cuda_x);
+	free(results_ref);
+	free(results);
 
-    for (size_t i=0; i<K; ++i) {
-      free(y[i]);
-      cudaFree(cuda_y[i]);
-    }
-    free(y);
-    free(cuda_y);
-
-    free(results);
-    free(results2);
- 
-    cublasDestroy(h);
-    return 0;
+	cublasDestroy(h);
+	return 0;
 }
