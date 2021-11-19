@@ -6,12 +6,6 @@
 #include "timer.hpp"
 #include <vector>
 #include <algorithm>
-//#include <utility> // for std::as_const()
-
-#include <string>
-#include <cassert>
-#include <utility>
-#include <type_traits>
  
 
 
@@ -58,6 +52,7 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 
 __global__
 void gpu_dotp8_wshuffle(const double *x, double * const *y, const size_t size, double *dotp){
+	// double * const * y ... I wanted const double **y, but for some reason, const has to be used like above	
 //void gpu_dotp8_wshuffle(const double *x, double **y, const size_t size, double *dotp){
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
@@ -171,7 +166,7 @@ double execution_wrapper(int grid_size,
 int main(void)
 {
     const size_t N = 100000;
-    const size_t K = 8;
+    const size_t K = 32;
 
     //
     // Initialize CUBLAS:
@@ -232,8 +227,10 @@ int main(void)
     }
 
 		// run my kernel
-		//const double ** &cy = y;
-		gpu_dotp8_wshuffle<<<256,256>>>(x, y, N, results2);
+		int call_times = int(K/8);
+		for(int i = 0; i < call_times; i++){
+			gpu_dotp8_wshuffle<<<256,256>>>(x, &y[8*i], N, &results2[8*i]);			
+		}
 
 
     //
