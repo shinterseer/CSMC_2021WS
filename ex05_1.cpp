@@ -81,15 +81,7 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 	//double thread_dotp[8] = {42};
 	double* thread_dotp = new double[8];
 	for(int i = 0; i < 8; i++) thread_dotp[i] = 0;
-	//double dp0 = 0;
-	//double dp1 = 0;
-	//double dp2 = 0;
-	//double dp3 = 0;
-	//double dp4 = 0;
-	//double dp5 = 0;
-	//double dp6 = 0;
-	//double dp7 = 0;
-	double warp_exchanger;
+	//double warp_exchanger;
 	
 	if (thread_id_global == 0){
 		for(int i = 0; i < 8; i++) dotp[i] = 0;
@@ -116,10 +108,10 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 			__syncwarp();
 		
 		for (unsigned int j = 0; j < 8; j++){
-			//thread_dotp[j] += __shfl_down_sync(-1, thread_dotp[j], shuffle_delta);			
-			warp_exchanger = thread_dotp[j];
-			__syncwarp();
-			thread_dotp[j] += __shfl_down_sync(-1, warp_exchanger, shuffle_delta);	
+			thread_dotp[j] += __shfl_down_sync(-1, thread_dotp[j], shuffle_delta);			
+			//warp_exchanger = thread_dotp[j];
+			//__syncwarp();
+			//thread_dotp[j] += __shfl_down_sync(-1, warp_exchanger, shuffle_delta);	
 			//thread_dotp[j] += 1;
 		}
 	}
@@ -129,9 +121,10 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 	// thread 0 (of each warp) writes result
 	if ((threadIdx.x % warpSize) == 0){
 		for (int j = 0; j < 8; j++){
-			double write_this = thread_dotp[j];
+			atomicAdd(&dotp[j], thread_dotp[j]);
+			//double write_this = thread_dotp[j];
 			//atomicAdd(&dotp[j], write_this);
-			atomicAdd(dotp+j, write_this);
+			//atomicAdd(dotp+j, write_this);
 		}
 	}
 	
@@ -421,7 +414,7 @@ int main(void)
 	cudaDeviceSynchronize();
 	
 	//gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, cuda_yy, N, gpu_results);
-	gpu_dotp8_wshuffle<<<1,128>>>(cuda_x, cuda_yy, N, gpu_results);
+	gpu_dotp8_wshuffle<<<8,128>>>(cuda_x, cuda_yy, N, gpu_results);
 	/*gpu_dotp8_wshuffle2<<<1,64>>>(cuda_x, cuda_yy, N, 
 																							gpu_results0,
 																							gpu_results1,
