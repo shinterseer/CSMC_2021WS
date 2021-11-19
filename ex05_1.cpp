@@ -6,6 +6,13 @@
 #include "timer.hpp"
 #include <vector>
 #include <algorithm>
+//#include <utility> // for std::as_const()
+
+#include <string>
+#include <cassert>
+#include <utility>
+#include <type_traits>
+ 
 
 
 __global__
@@ -50,7 +57,8 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 
 
 __global__
-void gpu_dotp8_wshuffle(const double *x, const double **y, const size_t size, double *dotp){
+void gpu_dotp8_wshuffle(const double *x, double * const *y, const size_t size, double *dotp){
+//void gpu_dotp8_wshuffle(const double *x, double **y, const size_t size, double *dotp){
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int thread_num = gridDim.x * blockDim.x;
@@ -163,7 +171,7 @@ double execution_wrapper(int grid_size,
 int main(void)
 {
     const size_t N = 100000;
-    const size_t K = 16;
+    const size_t K = 8;
 
     //
     // Initialize CUBLAS:
@@ -212,7 +220,6 @@ int main(void)
       cudaMemcpy(cuda_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
     }
 
-
     //
     // Let CUBLAS do the work:
     //
@@ -223,6 +230,11 @@ int main(void)
     for (size_t i=0; i<K; ++i) {
       cublasDdot(h, N, cuda_x, 1, cuda_y[i], 1, results2 + i);
     }
+
+		// run my kernel
+		//const double ** &cy = y;
+		gpu_dotp8_wshuffle<<<256,256>>>(x, y, N, results2);
+
 
     //
     // Compare results
