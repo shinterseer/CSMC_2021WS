@@ -3,10 +3,12 @@
 #include <stdio.h>
 #include <cmath>
 #include <iostream>
+#include "timer.hpp"
+#include <vector>
+#include <algorithm>
 
 
-
-_global__
+__global__
 void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, double *dotp){
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
@@ -47,7 +49,7 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 }
 
 
-_global__
+__global__
 void gpu_dotp8_wshuffle(const double *x, const double **y, const size_t size, double *dotp){
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
@@ -57,7 +59,7 @@ void gpu_dotp8_wshuffle(const double *x, const double **y, const size_t size, do
 	double thread_dotp[8] = {0};
 
 	if (thread_id_global == 0){
-		for(int i = 0; i < 8; i++) *dotp[i] = 0;
+		for(int i = 0; i < 8; i++) dotp[i] = 0;
 	}
 
 	for (unsigned int j = 0; j < 8; j++){
@@ -86,7 +88,38 @@ void gpu_dotp8_wshuffle(const double *x, const double **y, const size_t size, do
 	// thread 0 (of each warp) writes result
 	if ((threadIdx.x % warpSize) == 0){
 		for (unsigned int j = 0; j < 8; j++)
-			atomicAdd(dotp[j], thread_dotp[j]);
+			atomicAdd(&dotp[j], thread_dotp[j]);
+	}	
+}
+
+
+// __________________________ Toolbox _____________________________________
+// ________________________________________________________________________
+
+
+void cpu_dotp(double *x, double **y, double *results, size_t N, size_t K){
+	//
+	// Reference calculation on CPU:
+	//
+	for (size_t i=0; i<K; ++i) {
+		results[i] = 0;
+		for (size_t j=0; j<N; ++j) {
+			results[i] += x[j] * y[i][j];
+		}
+	}    
+}
+
+void cpu_init_vectors(double *x, double **y, size_t N, size_t K ){
+	//
+	// fill host arrays with values
+	//
+	for (size_t j=0; j<N; ++j) {
+		x[j] = 1 + j%K;
+	}
+	for (size_t i=0; i<K; ++i) {
+		for (size_t j=0; j<N; ++j) {
+			y[i][j] = 1 + rand() / (1.1 * RAND_MAX);
+		}
 	}	
 }
 
@@ -163,29 +196,13 @@ int main(void)
       cudaMalloc( (void **)(&cuda_y[i]), sizeof(double)*N);
     }
 
-    //
     // fill host arrays with values
-    //
-    for (size_t j=0; j<N; ++j) {
-      x[j] = 1 + j%K;
-    }
-    for (size_t i=0; i<K; ++i) {
-      for (size_t j=0; j<N; ++j) {
-        y[i][j] = 1 + rand() / (1.1 * RAND_MAX);
-      }
-    }
-
-    //
+		cpu_init_vectors(x, y, N, K );
+			
     // Reference calculation on CPU:
-    //
-    for (size_t i=0; i<K; ++i) {
-      results[i] = 0;
-      results2[i] = 0;
-      for (size_t j=0; j<N; ++j) {
-        results[i] += x[j] * y[i][j];
-      }
-    }    
-   
+		cpu_dotp(x, y, results, N, K);
+		
+		
     //
     // Copy data to GPU
     //
@@ -199,6 +216,9 @@ int main(void)
     //
     // Let CUBLAS do the work:
     //
+    for (size_t i=0; i<K; ++i)
+      results2[i] = 0;
+		
     std::cout << "Running dot products with CUBLAS..." << std::endl;
     for (size_t i=0; i<K; ++i) {
       cublasDdot(h, N, cuda_x, 1, cuda_y[i], 1, results2 + i);
