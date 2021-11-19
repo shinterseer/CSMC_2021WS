@@ -212,7 +212,7 @@ int main(void)
       cudaMemcpy(cuda_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
     }
 
-//tester comment
+//tester comment. som mor
     //
     // Let CUBLAS do the work:
     //
