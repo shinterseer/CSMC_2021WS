@@ -17,76 +17,6 @@
 // __________________________ GPU Kernels _________________________________
 // ________________________________________________________________________
 
-/*
-__global__
-void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, double *dotp){
-		
-	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
-	int thread_num = gridDim.x * blockDim.x;
-	
-	// sum of entries
-	double thread_dotp = 0;
-	
-	if (thread_id_global == 0){
-		*dotp = 0;
-	}
- 
-	for (unsigned int i = thread_id_global; i < size; i += thread_num){
-		thread_dotp += x[i] * y[i];
-	}
- 	
-	for(unsigned int stride = warpSize/2; stride > 0; stride /= 2){		
-		__syncwarp();
-		thread_dotp += __shfl_down_sync(ALL_MASK, thread_dotp, stride);
-	}
-	
-	__syncwarp();
-	// thread 0 (of each warp) writes result
-	if ((threadIdx.x % warpSize) == 0){
-		atomicAdd(dotp, thread_dotp);
-	}	
-}
-*/
-
-/*
-__global__
-//void gpu_dotp8_wshuffle_old(const double *x, double * const *y, const size_t size, double *dotp){
-	// double * const * y ... I wanted const double **y, but for some reason, const has to be used like above	
-void gpu_dotp8_wshuffle_old(const double *x, double *y, const size_t size, double *dotp){
-		
-	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
-	int thread_num = gridDim.x * blockDim.x;
-		double thread_dotp[8] = {0};
-	for(int i = 0; i < 8; i++) thread_dotp[i] = 0;
-	
-	if (thread_id_global == 0){
-		for(int i = 0; i < 8; i++) dotp[i] = 0;
-	}
-	
-	
-	for (unsigned int i = thread_id_global; i < size; i += thread_num){
-		for (unsigned int j = 0; j < 8; j++){
-			thread_dotp[j] += x[i] * y[j*size + i];
-		}
-	}
-		
-	for(int stride = warpSize/2; stride > 0; stride /= 2){		
-		__syncwarp();
-		for (unsigned int j = 0; j < 8; j++){
-			thread_dotp[j] += __shfl_down_sync(ALL_MASK, thread_dotp[j], stride);			
-		}
-	}
-	
-	__syncwarp();
-	// thread 0 (of each warp) writes result
-	if ((threadIdx.x % warpSize) == 0){
-		for (int j = 0; j < 8; j++){
-			atomicAdd(&dotp[j], thread_dotp[j]);
-		}
-	}	
-}
-*/
-
 __global__
 void gpu_dotp8_wshuffle(const double *x, double * const *y, const size_t size, double *dotp){
 	// double * const * y ... I wanted const double **y, but for some reason, const has to be used like above	
@@ -302,25 +232,24 @@ int main(void)
 		time_cublas = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false, cpu_cublas_dotp, h, K, N[ii], device_x, host_y, results);
 		printf("%5.8e; ", time_cublas);
 		
-		// kernel call for 1.1
+		// kernel call for 1.2
 		double time_dotp8 = 0;
 		time_dotp8 = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false,cpu_loop_dotp8,K,device_x, device_y, N[ii], gpu_results);
 		printf("%5.8e\n", time_dotp8);
 
 		
-		cudaMemcpy(results, gpu_results, sizeof(double)*K, cudaMemcpyDeviceToHost);
 
 		//
 		// Compare results
 		//
 		//std::cout << "Copying results back to host..." << std::endl;
+		cudaMemcpy(results, gpu_results, sizeof(double)*K, cudaMemcpyDeviceToHost);
 
 		if (check_results){
 			for (size_t i=0; i<K; ++i) {
 				std::cout << results_ref[i] << " on CPU, " << results[i] << " on GPU. Relative difference: " << fabs(results_ref[i] - results[i]) / results_ref[i] << std::endl;
 			}		
 		}
-
 		
 		//
 		// Clean up:
