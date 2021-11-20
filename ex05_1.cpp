@@ -16,24 +16,8 @@
 // __________________________ GPU Kernels _________________________________
 // ________________________________________________________________________
 
+
 /*
-__global__
-void gpu_set_to42(double *dotp){
-	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
-	
-	//double thread_dotp[8] = {42};
-
-	double* thread_dotp = new double[8];
-	for(int i = 0; i < 8; i++) thread_dotp[i] = 42;
-	
-	if (thread_id_global == 0){		
-		for(int i = 0; i < 8; i++) dotp[i] = thread_dotp[i];
-		//dotp[0] = 42;
-	}	
-}
-
-
-
 __global__
 void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, double *dotp){
 		
@@ -64,10 +48,11 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 }
 */
 
+/*
 __global__
-//void gpu_dotp8_wshuffle(const double *x, double * const *y, const size_t size, double *dotp){
+//void gpu_dotp8_wshuffle_old(const double *x, double * const *y, const size_t size, double *dotp){
 	// double * const * y ... I wanted const double **y, but for some reason, const has to be used like above	
-void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *dotp){
+void gpu_dotp8_wshuffle_old(const double *x, double *y, const size_t size, double *dotp){
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int thread_num = gridDim.x * blockDim.x;
@@ -100,54 +85,48 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 		}
 	}	
 }
-
+*/
 
 __global__
-//void gpu_dotp8_wshuffle2(const double *x, double * const *y, const size_t size, double *dotp){
+void gpu_dotp8_wshuffle(const double *x, double * const *y, const size_t size, double *dotp){
 	// double * const * y ... I wanted const double **y, but for some reason, const has to be used like above	
-void gpu_dotp8_wshuffle2(const double *x, double **y, const size_t size, double *dotp){
+//void gpu_dotp8_wshuffle2(const double *x, double **y, const size_t size, double *dotp){
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int thread_num = gridDim.x * blockDim.x;
 	double thread_dotp[8] = {0};
 	
+	// initialize local dot products
 	for(int i = 0; i < 8; i++) thread_dotp[i] = 0;
 	
+	// initialize result vector for atomicAdd()
 	if (thread_id_global == 0){
 		for(int i = 0; i < 8; i++) dotp[i] = 0;
 	}
 	
+	// dot product
 	for (unsigned int i = thread_id_global; i < size; i += thread_num){
 		for (unsigned int j = 0; j < 8; j++){
 			thread_dotp[j] += x[i] * y[j][i];
 		}
 	}
-		
+	
+	// sumation stage1 (warp reduction)
 	for(int stride = warpSize/2; stride > 0; stride /= 2){
 		__syncwarp();
 		for (unsigned int j = 0; j < 8; j++){
 			thread_dotp[j] += __shfl_down_sync(ALL_MASK, thread_dotp[j], stride);			
 		}
 	}
-	
-	//for(int i = 0; i < 8; i++) thread_dotp[i] = 42;
-	
 	__syncwarp();
-	// thread 0 (of each warp) writes result
+	
+	// sumation stage2 (atomicAdd)	
 	if ((threadIdx.x % warpSize) == 0){
 		for (int j = 0; j < 8; j++){
 			atomicAdd(&dotp[j], thread_dotp[j]);
 		}
-	}
-	
-	
-	
+	}	
 }
-
-
-
-
-
 
 // __________________________ Toolbox _____________________________________
 // ________________________________________________________________________
@@ -249,41 +228,22 @@ int main(void)
 	//
 	// allocate device memory
 	//
-	std::cout << "Allocating CUDA arrays..." << std::endl;
-	double *cuda_x; cudaMalloc( (void **)(&cuda_x), sizeof(double)*N);
-	
-	
+	std::cout << "Allocating device arrays..." << std::endl;
+	double *device_x; cudaMalloc( (void **)(&device_x), sizeof(double)*N);
+		
 	// we create K pointers (to be used for device memory addresses) and store them in host memory
-	double **cuda_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
+	//double **cuda_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
 	double **host_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
 	double **device_y; cudaMalloc(&device_y, sizeof(double*) * K);  // storing CUDA pointers on device!
 	// we set our K pointers by using cudaMalloc 
 	for (size_t i=0; i<K; ++i) {
-		cudaMalloc( (void **)(&cuda_y[i]), sizeof(double)*N);
 		cudaMalloc( (void **)(&host_y[i]), sizeof(double)*N);
-		//cudaMalloc( (double **)(&cuda_y[i]), sizeof(double)*N);
 	}
-	// we copy the pointers over to the device
-	cudaMemcpy(device_y, host_y, K*sizeof(double*),cudaMemcpyHostToDevice);
+
 	
 	double *gpu_results;
 	cudaMalloc(&gpu_results, K * sizeof(double));
-	/*
-	double *gpu_results0, *gpu_results1, *gpu_results2, *gpu_results3, *gpu_results4, *gpu_results5, *gpu_results6, *gpu_results7;
-	cudaMalloc(&gpu_results0, sizeof(double));
-	cudaMalloc(&gpu_results1, sizeof(double));
-	cudaMalloc(&gpu_results2, sizeof(double));
-	cudaMalloc(&gpu_results3, sizeof(double));
-	cudaMalloc(&gpu_results4, sizeof(double));
-	cudaMalloc(&gpu_results5, sizeof(double));
-	cudaMalloc(&gpu_results6, sizeof(double));
-	cudaMalloc(&gpu_results7, sizeof(double));
-	*/
-	
-	double *cuda_yy;  // avoiding double pointers
-	cudaMalloc(&cuda_yy, N*K * sizeof(double));
-	
-	
+		
 	// fill host arrays with values
 	cpu_init_vectors(x, y, N, K );
 		
@@ -294,12 +254,14 @@ int main(void)
 	//
 	// Copy data to GPU
 	//
-	std::cout << "Copying data to GPU..." << std::endl;
-	cudaMemcpy(cuda_x, x, sizeof(double)*N, cudaMemcpyHostToDevice);
+	std::cout << "Copying data to device..." << std::endl;
+	cudaMemcpy(device_x, x, sizeof(double)*N, cudaMemcpyHostToDevice);
+	
+	// copy the pointers to the device
+	cudaMemcpy(device_y, host_y, K*sizeof(double*),cudaMemcpyHostToDevice);
+	// copy the actual arrays to the device
 	for (size_t i=0; i<K; ++i) {
-		cudaMemcpy(cuda_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
 		cudaMemcpy(host_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
-		//cudaMemcpy(&cuda_yy[i*N], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
 	}
 
 	//
@@ -311,49 +273,17 @@ int main(void)
 	/*
 	std::cout << "Running dot products with CUBLAS..." << std::endl;
 	for (size_t i=0; i<K; ++i) {
-		cublasDdot(h, N, cuda_x, 1, cuda_y[i], 1, results + i);
+		cublasDdot(h, N, device_x, 1, host_y[i], 1, results + i);
 	}
 	*/
-	
-	
+		
 	//cpu_loop_call(cuda_x, cuda_y, gpu_results, N, K);
-	
-	for( int i = 0; i < K; i++){
-		//gpu_dotp_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, &(cuda_y[i][0]), N, &gpu_results[i]);
-		//gpu_dotp_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, &cuda_yy[i*N], N, &gpu_results[i]);
-	}
 	
 	cudaDeviceSynchronize();
 	
-	//gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, cuda_yy, N, gpu_results);
-	gpu_dotp8_wshuffle2<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, device_y, N, gpu_results);
-	//gpu_dotp8_wshuffle<<<256,256>>>(cuda_x, cuda_yy, N, gpu_results);
-	//gpu_dotp8_wshuffle3<<<16,128>>>(cuda_x, cuda_yy, N, gpu_results);
-	/*
-	gpu_dotp8_wshuffle2<<<64,128>>>(cuda_x, cuda_yy, N, 
-																							gpu_results0,
-																							gpu_results1,
-																							gpu_results2,
-																							gpu_results3,
-																							gpu_results4,
-																							gpu_results5,
-																							gpu_results6,
-																							gpu_results7);
-	*/
-	//gpu_set_to42<<<GRID_SIZE,BLOCK_SIZE>>>(gpu_results);
-	//gpu_set_to42<<<1,1>>>(gpu_results);
+	gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, N, gpu_results);
 	
 	cudaMemcpy(results, gpu_results, K*sizeof(double), cudaMemcpyDeviceToHost);
-	/*
-	cudaMemcpy(results, gpu_results0, sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(results+1, gpu_results1, sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(results+2, gpu_results2, sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(results+3, gpu_results3, sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(results+4, gpu_results4, sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(results+5, gpu_results5, sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(results+6, gpu_results6, sizeof(double), cudaMemcpyDeviceToHost);
-	cudaMemcpy(results+7, gpu_results7, sizeof(double), cudaMemcpyDeviceToHost);
-	*/
 	
 	//
 	// Compare results
@@ -369,19 +299,21 @@ int main(void)
 	//
 	std::cout << "Cleaning up..." << std::endl;
 	free(x);
-	cudaFree(cuda_x);
+	cudaFree(device_x);
 
 	for (size_t i=0; i<K; ++i) {
 		free(y[i]);
-		//cudaFree(cuda_y[i]);
+		cudaFree(host_y[i]);
 	}
-	cudaFree(cuda_yy);
+	free(host_y);
+	cudaFree(device_y);
+	free(host_y);	
 	free(y);
-	//free(cuda_y);
 
 	free(results_ref);
 	free(results);
 
 	cublasDestroy(h);
+	cudaDeviceReset();  // for CUDA leak checker to work		
 	return 0;
 }
