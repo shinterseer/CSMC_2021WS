@@ -9,7 +9,7 @@
  
 #define GRID_SIZE 256
 #define BLOCK_SIZE 256
-
+#define ALL_MASK 0xffffffff
 
 // __________________________ GPU Kernels _________________________________
 // ________________________________________________________________________
@@ -67,7 +67,7 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 
 	for(unsigned int stride = warpSize/2; stride > 0; stride /= 2){		
 		__syncwarp();
-		thread_dotp += __shfl_down_sync(-1, thread_dotp, stride);
+		thread_dotp += __shfl_down_sync(ALL_MASK, thread_dotp, stride);
 	}
 	
 	__syncwarp();
@@ -85,7 +85,6 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int thread_num = gridDim.x * blockDim.x;
-	
 	
 	// sum of entries
 	double thread_dotp[8] = {0};
@@ -131,7 +130,7 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 
 	for(int stride = warpSize/2; stride > 0; stride /= 2){		
 		for (unsigned int j = 0; j < 8; j++){
-			thread_dotp[j] += __shfl_down_sync(-1, thread_dotp[j], stride);			
+			thread_dotp[j] += __shfl_down_sync(ALL_MASK, thread_dotp[j], stride);			
 			//warp_exchanger = thread_dotp[j];
 			//__syncwarp();
 			//thread_dotp[j] += __shfl_down_sync(-1, warp_exchanger, shuffle_delta);	
