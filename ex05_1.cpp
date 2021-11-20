@@ -6,14 +6,17 @@
 #include "timer.hpp"
 #include <vector>
 #include <algorithm>
- 
+  
 #define GRID_SIZE 256
 #define BLOCK_SIZE 256
 #define ALL_MASK 0xffffffff
 
+//#define DEBUG
+
 // __________________________ GPU Kernels _________________________________
 // ________________________________________________________________________
 
+/*
 __global__
 void gpu_set_to42(double *dotp){
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
@@ -48,23 +51,6 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 		thread_dotp += x[i] * y[i];
 	}
  	
-	// now the reduction inside the warp
-/*
-	int shuffle_delta;
-	int lane = threadIdx.x % warpSize;	
-	for(int stride = 1; stride <= warpSize/2; stride *= 2){
-		
-		// if you are lower half -> get value from upper half and vice versa
-		if ((lane % (2*stride)) < stride)
-			shuffle_delta = stride;
-		else
-			shuffle_delta = (-1)*stride;
-		
-		__syncwarp();
-		thread_dotp += __shfl_down_sync(-1, thread_dotp, shuffle_delta);
-	}
-	*/
-
 	for(unsigned int stride = warpSize/2; stride > 0; stride /= 2){		
 		__syncwarp();
 		thread_dotp += __shfl_down_sync(ALL_MASK, thread_dotp, stride);
@@ -76,7 +62,7 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 		atomicAdd(dotp, thread_dotp);
 	}	
 }
-
+*/
 
 __global__
 //void gpu_dotp8_wshuffle(const double *x, double * const *y, const size_t size, double *dotp){
@@ -85,13 +71,8 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 		
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int thread_num = gridDim.x * blockDim.x;
-	
-	// sum of entries
-	double thread_dotp[8] = {0};
-	//double thread_dotp[8] = {42};
-	//double* thread_dotp = new double[8];
+		double thread_dotp[8] = {0};
 	for(int i = 0; i < 8; i++) thread_dotp[i] = 0;
-	//double warp_exchanger;
 	
 	if (thread_id_global == 0){
 		for(int i = 0; i < 8; i++) dotp[i] = 0;
@@ -103,54 +84,66 @@ void gpu_dotp8_wshuffle(const double *x, double *y, const size_t size, double *d
 			thread_dotp[j] += x[i] * y[j*size + i];
 		}
 	}
-	
-	
-	// now the reduction inside the warp
-	/*
-	int shuffle_delta;
-	int lane = threadIdx.x % warpSize;
-	for(int stride = 1; stride <= warpSize/2; stride *= 2){
 		
-		// if you are lower half -> get value from upper half and vice versa
-		if ((lane % (2*stride)) < stride)
-			shuffle_delta = stride;
-		else
-			shuffle_delta = (-1)*stride;
-			__syncwarp();
-		
-		for (unsigned int j = 0; j < 8; j++){
-			thread_dotp[j] += __shfl_down_sync(-1, thread_dotp[j], shuffle_delta);			
-			//warp_exchanger = thread_dotp[j];
-			//__syncwarp();
-			//thread_dotp[j] += __shfl_down_sync(-1, warp_exchanger, shuffle_delta);	
-			//thread_dotp[j] += 1;
-		}
-	}
-	*/
-
 	for(int stride = warpSize/2; stride > 0; stride /= 2){		
+		__syncwarp();
 		for (unsigned int j = 0; j < 8; j++){
 			thread_dotp[j] += __shfl_down_sync(ALL_MASK, thread_dotp[j], stride);			
-			//warp_exchanger = thread_dotp[j];
-			//__syncwarp();
-			//thread_dotp[j] += __shfl_down_sync(-1, warp_exchanger, shuffle_delta);	
-			//thread_dotp[j] += 1;
 		}
 	}
-
-	
 	
 	__syncwarp();
 	// thread 0 (of each warp) writes result
 	if ((threadIdx.x % warpSize) == 0){
 		for (int j = 0; j < 8; j++){
 			atomicAdd(&dotp[j], thread_dotp[j]);
-			//double write_this = thread_dotp[j];
-			//atomicAdd(&dotp[j], write_this);
-			//atomicAdd(dotp+j, write_this);
 		}
 	}	
 }
+
+
+__global__
+//void gpu_dotp8_wshuffle2(const double *x, double * const *y, const size_t size, double *dotp){
+	// double * const * y ... I wanted const double **y, but for some reason, const has to be used like above	
+void gpu_dotp8_wshuffle2(const double *x, double **y, const size_t size, double *dotp){
+		
+	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
+	int thread_num = gridDim.x * blockDim.x;
+	double thread_dotp[8] = {0};
+	
+	for(int i = 0; i < 8; i++) thread_dotp[i] = 0;
+	
+	if (thread_id_global == 0){
+		for(int i = 0; i < 8; i++) dotp[i] = 0;
+	}
+	
+	for (unsigned int i = thread_id_global; i < size; i += thread_num){
+		for (unsigned int j = 0; j < 8; j++){
+			thread_dotp[j] += x[i] * y[j][i];
+		}
+	}
+		
+	for(int stride = warpSize/2; stride > 0; stride /= 2){
+		__syncwarp();
+		for (unsigned int j = 0; j < 8; j++){
+			thread_dotp[j] += __shfl_down_sync(ALL_MASK, thread_dotp[j], stride);			
+		}
+	}
+	
+	//for(int i = 0; i < 8; i++) thread_dotp[i] = 42;
+	
+	__syncwarp();
+	// thread 0 (of each warp) writes result
+	if ((threadIdx.x % warpSize) == 0){
+		for (int j = 0; j < 8; j++){
+			atomicAdd(&dotp[j], thread_dotp[j]);
+		}
+	}
+	
+	
+	
+}
+
 
 
 
@@ -229,6 +222,7 @@ int main(void)
 	//bool test_results = false;
 	
 	const size_t N = 100000;
+	//const size_t N = 10;
 	const size_t K = 8;
 
 	//
@@ -257,13 +251,25 @@ int main(void)
 	//
 	std::cout << "Allocating CUDA arrays..." << std::endl;
 	double *cuda_x; cudaMalloc( (void **)(&cuda_x), sizeof(double)*N);
-	//double **cuda_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
-	//for (size_t i=0; i<K; ++i) {
-	//	cudaMalloc( (void **)(&cuda_y[i]), sizeof(double)*N);
-	//}
+	
+	
+	// we create K pointers (to be used for device memory addresses) and store them in host memory
+	double **cuda_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
+	double **host_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
+	double **device_y; cudaMalloc(&device_y, sizeof(double*) * K);  // storing CUDA pointers on device!
+	// we set our K pointers by using cudaMalloc 
+	for (size_t i=0; i<K; ++i) {
+		cudaMalloc( (void **)(&cuda_y[i]), sizeof(double)*N);
+		cudaMalloc( (void **)(&host_y[i]), sizeof(double)*N);
+		//cudaMalloc( (double **)(&cuda_y[i]), sizeof(double)*N);
+	}
+	// we copy the pointers over to the device
+	cudaMemcpy(device_y, host_y, K*sizeof(double*),cudaMemcpyHostToDevice);
+	
 	double *gpu_results;
-	double *gpu_results0, *gpu_results1, *gpu_results2, *gpu_results3, *gpu_results4, *gpu_results5, *gpu_results6, *gpu_results7;
 	cudaMalloc(&gpu_results, K * sizeof(double));
+	/*
+	double *gpu_results0, *gpu_results1, *gpu_results2, *gpu_results3, *gpu_results4, *gpu_results5, *gpu_results6, *gpu_results7;
 	cudaMalloc(&gpu_results0, sizeof(double));
 	cudaMalloc(&gpu_results1, sizeof(double));
 	cudaMalloc(&gpu_results2, sizeof(double));
@@ -272,7 +278,7 @@ int main(void)
 	cudaMalloc(&gpu_results5, sizeof(double));
 	cudaMalloc(&gpu_results6, sizeof(double));
 	cudaMalloc(&gpu_results7, sizeof(double));
-	
+	*/
 	
 	double *cuda_yy;  // avoiding double pointers
 	cudaMalloc(&cuda_yy, N*K * sizeof(double));
@@ -291,8 +297,9 @@ int main(void)
 	std::cout << "Copying data to GPU..." << std::endl;
 	cudaMemcpy(cuda_x, x, sizeof(double)*N, cudaMemcpyHostToDevice);
 	for (size_t i=0; i<K; ++i) {
-		//cudaMemcpy(cuda_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
-		cudaMemcpy(&cuda_yy[i*N], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
+		cudaMemcpy(cuda_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
+		cudaMemcpy(host_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
+		//cudaMemcpy(&cuda_yy[i*N], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
 	}
 
 	//
@@ -318,7 +325,8 @@ int main(void)
 	
 	cudaDeviceSynchronize();
 	
-	gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, cuda_yy, N, gpu_results);
+	//gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, cuda_yy, N, gpu_results);
+	gpu_dotp8_wshuffle2<<<GRID_SIZE,BLOCK_SIZE>>>(cuda_x, device_y, N, gpu_results);
 	//gpu_dotp8_wshuffle<<<256,256>>>(cuda_x, cuda_yy, N, gpu_results);
 	//gpu_dotp8_wshuffle3<<<16,128>>>(cuda_x, cuda_yy, N, gpu_results);
 	/*
