@@ -150,7 +150,8 @@ int main(void)
 	const std::vector<size_t> N = {size_t(1e3), size_t(3e3), 
 																size_t(1e4), size_t(3e4),
 																size_t(1e5), size_t(3e5),
-																size_t(1e6)};
+																size_t(1e6), size_t(3e6),
+																size_t(1e7)};
 													
 	//const size_t N = 100000;
 	//const size_t N = 10;
