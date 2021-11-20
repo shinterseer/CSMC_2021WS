@@ -13,9 +13,9 @@
 
 //#define DEBUG
 
+
 // __________________________ GPU Kernels _________________________________
 // ________________________________________________________________________
-
 
 /*
 __global__
@@ -159,17 +159,31 @@ void cpu_init_vectors(double *x, double **y, size_t N, size_t K ){
 	}	
 }
 
+
+void cpu_loop_dotp8(int K, double *device_x, double **device_y, int N, double *gpu_results){
+	for(int i = 0; i < int(K/8); i++)
+		gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, &device_y[8*i], N, &gpu_results[8*i]);	
+}
+
+
+void cpu_cublas_dotp(cublasHandle_t h, int K, int N, double* device_x, double** host_y, double* results){
+	for (size_t i=0; i<K; ++i) {
+		cublasDdot(h, N, device_x, 1, host_y[i], 1, results + i);
+	}	
+}
+
  
  
 // __________________________ Execution wrapper ___________________________
 // ________________________________________________________________________
 
-template<typename KERNEL, typename ...ARGS>
+template<typename CALLABLE, typename ...ARGS>
 double execution_wrapper(int grid_size,
 												 int block_size,
 												 int repetitions,
-												 KERNEL gpu_kernel, 
-												 ARGS... pass_this_to_kernel)
+												 bool device_function,
+												 CALLABLE function, 
+												 ARGS&& ... arg_pack)
 {
 	Timer single_timer;	
 	double elapsed_time = 0;
@@ -182,8 +196,11 @@ double execution_wrapper(int grid_size,
 		cudaDeviceSynchronize(); //make sure gpu is ready
 		single_timer.reset();
 		
-		gpu_kernel<<<grid_size,block_size>>>(pass_this_to_kernel...);
-
+		if (device_function)
+			function<<<grid_size,block_size>>>(std::forward<ARGS>(arg_pack) ...);
+		else
+			function(std::forward<ARGS>(arg_pack) ...);
+			
 		cudaDeviceSynchronize(); //make sure gpu is done			
 		elapsed_time = single_timer.get();
 		runtimes.push_back(elapsed_time);
@@ -198,7 +215,7 @@ double execution_wrapper(int grid_size,
 
 int main(void)
 {
-	//bool test_results = false;
+	bool check_results = true;
 	
 	const size_t N = 100000;
 	//const size_t N = 10;
@@ -270,8 +287,12 @@ int main(void)
 	for (size_t i=0; i<K; ++i)
 		results[i] = 0;
 	
-	/*
-	std::cout << "Running dot products with CUBLAS..." << std::endl;
+	double time_cublas = 0;
+	time_cublas = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false, cpu_cublas_dotp, h, K, N, device_x, host_y, results);
+	printf("elapsed time for cublas: %2.3f\n", time_cublas);
+	//std::cout << "Running dot products with CUBLAS..." << std::endl;
+	//cpu_cublas_dotp(h, K, N, device_x, host_y, results);
+		/*
 	for (size_t i=0; i<K; ++i) {
 		cublasDdot(h, N, device_x, 1, host_y[i], 1, results + i);
 	}
@@ -282,20 +303,29 @@ int main(void)
 	cudaDeviceSynchronize();
 
 	// kernel call for 1.1
+	double elapsed_time = 0;
+	//elapsed_time = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,true,gpu_dotp8_wshuffle,device_x, device_y, N, gpu_results);
 	//gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, N, gpu_results);
+	
+	//cpu_loop_dotp8(K, device_x, device_y, N, gpu_results);
+	//elapsed_time = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false,cpu_loop_dotp8, K, device_x, device_y, N, gpu_results);
+	//printf("elapsed time for gpu_dotp8_wshuffle in loop: %2.3f\n", elapsed_time);
 
 	//kernel call for 1.2
-	for(int i = 0; i < int(K/8); i++)
-		gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, &device_y[8*i], N, &gpu_results[8*i]);
+	//for(int i = 0; i < int(K/8); i++)
+	//	gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, &device_y[8*i], N, &gpu_results[8*i]);
+	//cudaMemcpy(results, gpu_results, K*sizeof(double), cudaMemcpyDeviceToHost);
 	
-	cudaMemcpy(results, gpu_results, K*sizeof(double), cudaMemcpyDeviceToHost);
 	
 	//
 	// Compare results
 	//
 	std::cout << "Copying results back to host..." << std::endl;
-	for (size_t i=0; i<K; ++i) {
-		std::cout << results_ref[i] << " on CPU, " << results[i] << " on GPU. Relative difference: " << fabs(results_ref[i] - results[i]) / results_ref[i] << std::endl;
+
+	if (check_results){
+		for (size_t i=0; i<K; ++i) {
+			std::cout << results_ref[i] << " on CPU, " << results[i] << " on GPU. Relative difference: " << fabs(results_ref[i] - results[i]) / results_ref[i] << std::endl;
+		}		
 	}
 
 	
