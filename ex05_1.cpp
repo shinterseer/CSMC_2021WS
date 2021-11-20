@@ -217,122 +217,134 @@ int main(void)
 {
 	bool check_results = false;
 	
-	const size_t N = 100000;
+	const std::vector<size_t> N = {size_t(1e3), size_t(3e3), 
+																size_t(1e4), size_t(3e4),
+																size_t(1e5), size_t(3e5),
+																size_t(1e6)};
+													
+	//const size_t N = 100000;
 	//const size_t N = 10;
 	const size_t K = 32;
 
-	//
-	// Initialize CUBLAS:
-	//
-	std::cout << "Init CUBLAS..." << std::endl;
-	cublasHandle_t h;
-	cublasCreate(&h);
-
-
-	//
-	// allocate host memory:
-	//
-	//std::cout << "Allocating host arrays..." << std::endl;
-	double  *x = (double*)malloc(sizeof(double) * N);
-	double **y = (double**)malloc(sizeof(double*) * K);
-	for (size_t i=0; i<K; ++i) {
-		y[i] = (double*)malloc(sizeof(double) * N);
-	}
-	double *results_ref  = (double*)malloc(sizeof(double) * K);
-	double *results = (double*)malloc(sizeof(double) * K);
-
-
-	//
-	// allocate device memory
-	//
-	//std::cout << "Allocating device arrays..." << std::endl;
-	double *device_x; cudaMalloc( (void **)(&device_x), sizeof(double)*N);
-		
-	// we create K pointers (to be used for device memory addresses) and store them in host memory
-	double **host_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
-	double **device_y; cudaMalloc(&device_y, sizeof(double*) * K);  // storing CUDA pointers on device!
-	// we set our K pointers by using cudaMalloc 
-	for (size_t i=0; i<K; ++i) {
-		cudaMalloc( (void **)(&host_y[i]), sizeof(double)*N);
-	}
-
-	
-	double *gpu_results;
-	cudaMalloc(&gpu_results, K * sizeof(double));
-		
-	// fill host arrays with values
-	cpu_init_vectors(x, y, N, K );
-		
-	// Reference calculation on CPU
-	if (check_results)
-		cpu_dotp(x, y, results_ref, N, K);
-	
-	//
-	// Copy data to GPU
-	//
-	//std::cout << "Copying data to device..." << std::endl;
-	cudaMemcpy(device_x, x, sizeof(double)*N, cudaMemcpyHostToDevice);
-	
-	// copy the pointers to the device
-	cudaMemcpy(device_y, host_y, K*sizeof(double*),cudaMemcpyHostToDevice);
-	// copy the actual arrays to the device
-	for (size_t i=0; i<K; ++i) {
-		cudaMemcpy(host_y[i], y[i], sizeof(double)*N, cudaMemcpyHostToDevice);
-	}
-
 
 	printf("N; K; time_cublas; time_dotp8\n");
-	printf("%zu; ",N);
-	printf("%zu; ",K);
-	//
-	// Let CUBLAS do the work:
-	//
-	for (size_t i=0; i<K; ++i)
-		results[i] = 0;
-	double time_cublas = 0;
-	time_cublas = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false, cpu_cublas_dotp, h, K, N, device_x, host_y, results);
-	printf("%5.8e; ", time_cublas);
 	
-	// kernel call for 1.1
-	double time_dotp8 = 0;
-	time_dotp8 = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false,cpu_loop_dotp8,K,device_x, device_y, N, gpu_results);
-	printf("%5.8e\n", time_dotp8);
+	for(int ii = 0; ii < N.size(); ii++){
+		printf("%zu; ",N[ii]);
+		printf("%zu; ",K);
 
-	
-	cudaMemcpy(results, gpu_results, sizeof(double)*K, cudaMemcpyDeviceToHost);
+		//
+		// Initialize CUBLAS:
+		//
+		//std::cout << "Init CUBLAS..." << std::endl;
+		cublasHandle_t h;
+		cublasCreate(&h);
 
-	//
-	// Compare results
-	//
-	//std::cout << "Copying results back to host..." << std::endl;
 
-	if (check_results){
+		//
+		// allocate host memory:
+		//
+		//std::cout << "Allocating host arrays..." << std::endl;
+		double  *x = (double*)malloc(sizeof(double) * N[ii]);
+		double **y = (double**)malloc(sizeof(double*) * K);
 		for (size_t i=0; i<K; ++i) {
-			std::cout << results_ref[i] << " on CPU, " << results[i] << " on GPU. Relative difference: " << fabs(results_ref[i] - results[i]) / results_ref[i] << std::endl;
-		}		
-	}
+			y[i] = (double*)malloc(sizeof(double) * N[ii]);
+		}
+		double *results_ref  = (double*)malloc(sizeof(double) * K);
+		double *results = (double*)malloc(sizeof(double) * K);
 
-	
-	//
-	// Clean up:
-	//
-	//std::cout << "Cleaning up..." << std::endl;
-	free(x);
-	cudaFree(device_x);
 
-	for (size_t i=0; i<K; ++i) {
-		free(y[i]);
-		cudaFree(host_y[i]);
-	}
-	free(y);
-	free(host_y);
-	cudaFree(device_y);
+		//
+		// allocate device memory
+		//
+		//std::cout << "Allocating device arrays..." << std::endl;
+		double *device_x; cudaMalloc( (void **)(&device_x), sizeof(double)*N[ii]);
+			
+		// we create K pointers (to be used for device memory addresses) and store them in host memory
+		double **host_y = (double**)malloc(sizeof(double*) * K);  // storing CUDA pointers on host!
+		double **device_y; cudaMalloc(&device_y, sizeof(double*) * K);  // storing CUDA pointers on device!
+		// we set our K pointers by using cudaMalloc 
+		for (size_t i=0; i<K; ++i) {
+			cudaMalloc( (void **)(&host_y[i]), sizeof(double)*N[ii]);
+		}
 
-	free(results_ref);
-	free(results);
-	cudaFree(gpu_results);
+		
+		double *gpu_results;
+		cudaMalloc(&gpu_results, K * sizeof(double));
+			
+		// fill host arrays with values
+		cpu_init_vectors(x, y, N[ii], K );
+			
+		// Reference calculation on CPU
+		if (check_results)
+			cpu_dotp(x, y, results_ref, N[ii], K);
+		
+		//
+		// Copy data to GPU
+		//
+		//std::cout << "Copying data to device..." << std::endl;
+		cudaMemcpy(device_x, x, sizeof(double)*N[ii], cudaMemcpyHostToDevice);
+		
+		// copy the pointers to the device
+		cudaMemcpy(device_y, host_y, K*sizeof(double*),cudaMemcpyHostToDevice);
+		// copy the actual arrays to the device
+		for (size_t i=0; i<K; ++i) {
+			cudaMemcpy(host_y[i], y[i], sizeof(double)*N[ii], cudaMemcpyHostToDevice);
+		}
+
+
+		//
+		// Let CUBLAS do the work:
+		//
+		for (size_t i=0; i<K; ++i)
+			results[i] = 0;
+		double time_cublas = 0;
+		time_cublas = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false, cpu_cublas_dotp, h, K, N[ii], device_x, host_y, results);
+		printf("%5.8e; ", time_cublas);
+		
+		// kernel call for 1.1
+		double time_dotp8 = 0;
+		time_dotp8 = execution_wrapper(GRID_SIZE,BLOCK_SIZE,10,false,cpu_loop_dotp8,K,device_x, device_y, N[ii], gpu_results);
+		printf("%5.8e\n", time_dotp8);
+
+		
+		cudaMemcpy(results, gpu_results, sizeof(double)*K, cudaMemcpyDeviceToHost);
+
+		//
+		// Compare results
+		//
+		//std::cout << "Copying results back to host..." << std::endl;
+
+		if (check_results){
+			for (size_t i=0; i<K; ++i) {
+				std::cout << results_ref[i] << " on CPU, " << results[i] << " on GPU. Relative difference: " << fabs(results_ref[i] - results[i]) / results_ref[i] << std::endl;
+			}		
+		}
+
+		
+		//
+		// Clean up:
+		//
+		//std::cout << "Cleaning up..." << std::endl;
+		free(x);
+		cudaFree(device_x);
+
+		for (size_t i=0; i<K; ++i) {
+			free(y[i]);
+			cudaFree(host_y[i]);
+		}
+		free(y);
+		free(host_y);
+		cudaFree(device_y);
+
+		free(results_ref);
+		free(results);
+		cudaFree(gpu_results);
 
 	cublasDestroy(h);
+		
+	}
+	
 	cudaDeviceReset();  // for CUDA leak checker to work		
 	return 0;
 }
