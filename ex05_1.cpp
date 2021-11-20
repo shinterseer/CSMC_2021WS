@@ -202,7 +202,7 @@ int main(void)
 	
 	const size_t N = 100000;
 	//const size_t N = 10;
-	const size_t K = 8;
+	const size_t K = 32;
 
 	//
 	// Initialize CUBLAS:
@@ -280,8 +280,13 @@ int main(void)
 	//cpu_loop_call(cuda_x, cuda_y, gpu_results, N, K);
 	
 	cudaDeviceSynchronize();
-	
-	gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, N, gpu_results);
+
+	// kernel call for 1.1
+	//gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, N, gpu_results);
+
+	//kernel call for 1.2
+	for(int i = 0; i < int(K/8); i++)
+		gpu_dotp8_wshuffle<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, &device_y[8*i], N, &gpu_results[8*i]);
 	
 	cudaMemcpy(results, gpu_results, K*sizeof(double), cudaMemcpyDeviceToHost);
 	
@@ -305,13 +310,13 @@ int main(void)
 		free(y[i]);
 		cudaFree(host_y[i]);
 	}
+	free(y);
 	free(host_y);
 	cudaFree(device_y);
-	free(host_y);	
-	free(y);
 
 	free(results_ref);
 	free(results);
+	cudaFree(gpu_results);
 
 	cublasDestroy(h);
 	cudaDeviceReset();  // for CUDA leak checker to work		
