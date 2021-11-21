@@ -9,9 +9,9 @@
 
 
 // y = A * x
-__global__ void cuda_csr_matvec_product(int N, int *csr_rowoffsets,
-                                        int *csr_colindices, double *csr_values,
-                                        double *x, double *y)
+__global__ void cuda_csr_matvec_product(const int N, const int *csr_rowoffsets,
+                                        const int *csr_colindices, const double *csr_values,
+                                        const double *x, double *y)
 {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x) {
     double sum = 0;
@@ -23,7 +23,7 @@ __global__ void cuda_csr_matvec_product(int N, int *csr_rowoffsets,
 }
 
 // cuda_vecadd: x <- x + alpha * y
-__global__ void cuda_vecadd(int N, double *x, double *y, double alpha)
+__global__ void cuda_vecadd(const int N, double *x, const double *y, const double alpha)
 {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x)
     x[i] += alpha * y[i];
@@ -31,14 +31,14 @@ __global__ void cuda_vecadd(int N, double *x, double *y, double alpha)
 
 
 // cuda_vecadd2: x <- y + alpha * x
-__global__ void cuda_vecadd2(int N, double *x, double *y, double alpha)
+__global__ void cuda_vecadd2(const int N, double *x, const double *y, const double alpha)
 {
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x)
     x[i] = y[i] + alpha * x[i];
 }
 
 // result = (x, y)
-__global__ void cuda_dot_product(int N, double *x, double *y, double *result)
+__global__ void cuda_dot_product(const int N, const double *x, const double *y, double *result)
 {
 	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x * gridDim.x;
@@ -65,9 +65,10 @@ __global__ void cuda_dot_product(int N, double *x, double *y, double *result)
 }
 
 
-void conjugate_gradient_pipe(int N, // number of unknows
-                        int *csr_rowoffsets, int *csr_colindices,
-                        double *csr_values, double *rhs, double *solution)
+void conjugate_gradient_pipe(const int N, // number of unknows
+                        const int *csr_rowoffsets, const int *csr_colindices,
+                        const double *csr_values, const double *rhs, double *solution,
+												const int max_its = 10000)
 //, double *init_guess)   // feel free to add a nonzero initial guess as needed
 {
   // initialize timer
@@ -77,7 +78,7 @@ void conjugate_gradient_pipe(int N, // number of unknows
   std::fill(solution, solution + N, 0);
 
   // initialize work vectors:
-  double alpha, beta;
+  //double alpha, beta;
   double *cuda_solution, *cuda_p, *cuda_r, *cuda_Ap, *cuda_scalar;
   cudaMalloc(&cuda_p, sizeof(double) * N);
   cudaMalloc(&cuda_r, sizeof(double) * N);
@@ -139,7 +140,7 @@ void conjugate_gradient_pipe(int N, // number of unknows
 		cudaDeviceSynchronize();
 
 		// line 8
-		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_solution, cuda_p, -host_alpha);
+		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_p, -host_alpha);
 		cudaDeviceSynchronize();
 
     // line 9:
@@ -171,13 +172,13 @@ void conjugate_gradient_pipe(int N, // number of unknows
 
 		// line 13
 		host_alpha = host_rr / host_pAp;
-	  cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
+	  //cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
 
 		// line 14
 		host_beta = host_alpha*host_alpha * host_ApAp / host_rr - 1;
 		cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
 
-    if (iters > 10000)
+    if (iters > max_its)
       break; // solver didn't converge
     ++iters;
   }
@@ -188,8 +189,8 @@ void conjugate_gradient_pipe(int N, // number of unknows
   cudaDeviceSynchronize();
   std::cout << "Time elapsed: " << timer.get() << " (" << timer.get() / iters << " per iteration)" << std::endl;
 
-  if (iters > 10000)
-    std::cout << "Conjugate Gradient did NOT converge within 10000 iterations"
+  if (iters > max_its)
+    std::cout << "Conjugate Gradient did NOT converge within " << max_its << " iterations"
               << std::endl;
   else
     std::cout << "Conjugate Gradient converged in " << iters << " iterations."
@@ -206,7 +207,7 @@ void conjugate_gradient_pipe(int N, // number of unknows
 
 /** Solve a system with `points_per_direction * points_per_direction` unknowns
  */
-void solve_system(int points_per_direction) {
+void solve_system(int points_per_direction, const int max_its = 10000) {
 
   int N = points_per_direction *
           points_per_direction; // number of unknows to solve for
@@ -253,7 +254,7 @@ void solve_system(int points_per_direction) {
   //
   // Call Conjugate Gradient implementation with GPU arrays
   //
-  conjugate_gradient_pipe(N, cuda_csr_rowoffsets, cuda_csr_colindices, cuda_csr_values, rhs, solution);
+  conjugate_gradient_pipe(N, cuda_csr_rowoffsets, cuda_csr_colindices, cuda_csr_values, rhs, solution, max_its);
 
   //
   // Check for convergence:
@@ -275,7 +276,7 @@ void solve_system(int points_per_direction) {
 int main() {
 
 	int p_grid = 30;
-  solve_system(p_grid); // solves a system with p_grid*p_grid unknowns
+  solve_system(p_grid, 12); // solves a system with p_grid*p_grid unknowns
 
   return EXIT_SUCCESS;
 }
