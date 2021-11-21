@@ -64,37 +64,42 @@ __global__ void cuda_dot_product(const int N, const double *x, const double *y, 
   if (threadIdx.x == 0) atomicAdd(result, shared_mem[0]);
 }
 
-
 __global__ void cuda_cg_blue(const int N, 
-														 double *x, double *r, double *p, const double * Ap,
-														 const double alpha, const double beta,
-														 double *cuda_rr){
+												 double *x, double *r, double *p, const double * Ap, double *cuda_rr, 
+												 const double alpha, const double beta){
+//__global__ void cuda_cg_blue(const int N, 
+//												 double *x, double *r, double *p, const double * Ap, double *cuda_rr, 
+//												 const double *alpha, const double *beta){
 
+
+	//__shared__ double shared_mem[BLOCK_SIZE];
 	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x * gridDim.x;
 
 	double p_old, r_new;
-	double rr = 0;
-  for (int i = global_thread_idx; i < N; i += num_threads){
+	//double rr = 0;
+  for (size_t i = global_thread_idx; i < N; i += num_threads){
 		p_old = p[i];
 		
 		// line 7
-    x[i] += alpha * p_old;
+    x[i] += *alpha * p_old;
+    //x[i] += alpha * p[i];
 	
 		// line 8
 		r_new = r[i] - alpha * Ap[i]; 
 		r[i] = r_new;
+		//r[i] -= alpha * Ap[i]; 
 		
 		// line 9
 		p[i] = r_new + beta*p_old;
+		//p[i] = r[i] + beta*p[i];
 
 		// <r,r>
-		rr += r_new * r_new;
+		//rr += r_new * r_new;
 	}
 
 	// reduction for scalar product <r,r>
-	__shared__ double shared_mem[BLOCK_SIZE];
-
+	/*
   shared_mem[threadIdx.x] = rr;
   for (int k = blockDim.x / 2; k > 0; k /= 2) {
     __syncthreads();
@@ -104,7 +109,9 @@ __global__ void cuda_cg_blue(const int N,
   }
 
 	if (global_thread_idx == 0) *cuda_rr = 0;
+  __syncthreads();
   if (threadIdx.x == 0) atomicAdd(cuda_rr, shared_mem[0]);
+	*/
 }
 
 
@@ -334,12 +341,15 @@ void conjugate_gradient_pipe2(const int N, // number of unknows
     // line 9:
     //cuda_vecadd2<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_r, host_beta);
 		//cudaDeviceSynchronize();
+
+		cudaDeviceSynchronize();
+		//cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
+		//cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
 		
 		cuda_cg_blue<<<GRID_SIZE, BLOCK_SIZE>>>(N, 
-														 cuda_solution, cuda_r, cuda_p, cuda_Ap,
-														 host_alpha, host_beta,
-														 cuda_rr);
-		cudaDeviceSynchronize();		
+														 cuda_solution, cuda_r, cuda_p, cuda_Ap, cuda_rr,
+														 host_alpha, host_beta);
+		cudaDeviceSynchronize();
 		
     // line 10:
     cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
@@ -356,9 +366,9 @@ void conjugate_gradient_pipe2(const int N, // number of unknows
 		cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
 
 		// line 12: compute <r,r>
-		//cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
-		//cudaDeviceSynchronize();
-		cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);
+		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
+		cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);		
+		cudaDeviceSynchronize();
 
 		// break condition
     if (std::sqrt(host_rr / initial_rr) < 1e-6) 
