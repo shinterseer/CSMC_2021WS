@@ -74,26 +74,29 @@ void conjugate_gradient_pipe(const int N, // number of unknows
   // initialize timer
   Timer timer;
 
-  // clear solution vector (it may contain garbage values):
-  std::fill(solution, solution + N, 0);
 
   // initialize work vectors:
   //double alpha, beta;
-  double *cuda_solution, *cuda_p, *cuda_r, *cuda_Ap, *cuda_scalar;
+  double *cuda_solution, *cuda_p, *cuda_r, *cuda_Ap;
   cudaMalloc(&cuda_p, sizeof(double) * N);
   cudaMalloc(&cuda_r, sizeof(double) * N);
   cudaMalloc(&cuda_Ap, sizeof(double) * N);
   cudaMalloc(&cuda_solution, sizeof(double) * N);
-  cudaMalloc(&cuda_scalar, sizeof(double));
-	double *cuda_alpha, *cuda_beta, *cuda_pAp, *cuda_rr, *cuda_ApAp;
-  cudaMalloc(&cuda_alpha, sizeof(double));
-  cudaMalloc(&cuda_beta, sizeof(double));
+	//double *cuda_scalar;
+  //cudaMalloc(&cuda_scalar, sizeof(double));
+	double *cuda_pAp, *cuda_rr, *cuda_ApAp;
   cudaMalloc(&cuda_pAp, sizeof(double));
   cudaMalloc(&cuda_rr, sizeof(double));
   cudaMalloc(&cuda_ApAp, sizeof(double));
+	//double *cuda_alpha, *cuda_beta;
+  //cudaMalloc(&cuda_alpha, sizeof(double));
+  //cudaMalloc(&cuda_beta, sizeof(double));
 
-	// line2: x_0 = 0
+
+  // line 1: choose x_0
+  std::fill(solution, solution + N, 0);
   cudaMemcpy(cuda_solution, solution, sizeof(double) * N, cudaMemcpyHostToDevice);
+	
 	// line 2: p_0 = b
   cudaMemcpy(cuda_p, rhs, sizeof(double) * N, cudaMemcpyHostToDevice); 
 	// line 2: r_0 = b
@@ -114,7 +117,6 @@ void conjugate_gradient_pipe(const int N, // number of unknows
   double host_rr = 0;
   cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);
 	// line 4 final: alhpa = rr / pAp
-  cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
 	double host_alpha = host_rr / host_pAp;
   //cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
 	
@@ -140,7 +142,7 @@ void conjugate_gradient_pipe(const int N, // number of unknows
 		cudaDeviceSynchronize();
 
 		// line 8
-		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_p, -host_alpha);
+		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_Ap, (-1)*host_alpha);
 		cudaDeviceSynchronize();
 
     // line 9:
@@ -176,7 +178,7 @@ void conjugate_gradient_pipe(const int N, // number of unknows
 
 		// line 14
 		host_beta = host_alpha*host_alpha * host_ApAp / host_rr - 1;
-		cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
+		//cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
 
     if (iters > max_its)
       break; // solver didn't converge
@@ -200,7 +202,7 @@ void conjugate_gradient_pipe(const int N, // number of unknows
   cudaFree(cuda_r);
   cudaFree(cuda_Ap);
   cudaFree(cuda_solution);
-  cudaFree(cuda_scalar);
+  //cudaFree(cuda_scalar);
 }
 
 
@@ -275,8 +277,8 @@ void solve_system(int points_per_direction, const int max_its = 10000) {
 
 int main() {
 
-	int p_grid = 30;
-  solve_system(p_grid, 12); // solves a system with p_grid*p_grid unknowns
+	int p_grid = 100;
+  solve_system(p_grid); // solves a system with p_grid*p_grid unknowns
 
   return EXIT_SUCCESS;
 }
