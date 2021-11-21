@@ -91,42 +91,43 @@ void conjugate_gradient_pipe(int N, // number of unknows
   cudaMalloc(&cuda_rr, sizeof(double));
   cudaMalloc(&cuda_ApAp, sizeof(double));
 
-	// line2: x_0 = 0, Ax_0 = 0
+	// line2: x_0 = 0
   cudaMemcpy(cuda_solution, solution, sizeof(double) * N, cudaMemcpyHostToDevice);
 	// line 2: p_0 = b
   cudaMemcpy(cuda_p, rhs, sizeof(double) * N, cudaMemcpyHostToDevice); 
 	// line 2: r_0 = b
   cudaMemcpy(cuda_r, rhs, sizeof(double) * N, cudaMemcpyHostToDevice);
 
-	// line 4: compute Ap
+	// line 3: compute Ap
 	cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
+  cudaDeviceSynchronize();
+
 	// line 4: compute <p,Ap>
   cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_Ap, cuda_pAp);
+  //cudaDeviceSynchronize();
+	double host_pAp = 0;
+  cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);	
 	// line 4: compute <r,r>
   cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
-
-	// line 4
+  //cudaDeviceSynchronize();
   double host_rr = 0;
   cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);
-
-	double host_pAp = 0;
-  cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
-
 	// line 4 final: alhpa = rr / pAp
   cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
-	double host_alpha = host_rr / host pAp;
-  cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
+	double host_alpha = host_rr / host_pAp;
+  //cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
 	
 	// line 5: compute <Ap,Ap>
   cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_Ap, cuda_Ap, cuda_ApAp);
+  //cudaDeviceSynchronize();
 	double host_ApAp = 0;
   cudaMemcpy(&host_ApAp, cuda_ApAp, sizeof(double), cudaMemcpyDeviceToHost);
 	
 	// line 5: beta = alpha^2 * ApAp / rr - 1
 	double host_beta = host_alpha*host_alpha * host_ApAp / host_rr - 1;
-  cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
+  //cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
 
-  double initial_rr = host_rr;
+  const double initial_rr = host_rr;
 
   int iters = 0;
   cudaDeviceSynchronize();
@@ -134,27 +135,34 @@ void conjugate_gradient_pipe(int N, // number of unknows
   while (1) {
 
 		// line 7
-		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_solution, cuda_p, cuda_alpha);
+		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_solution, cuda_p, host_alpha);
+		cudaDeviceSynchronize();
 
 		// line 8
-		cuda_vecsub<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_solution, cuda_p, cuda_alpha);
+		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_solution, cuda_p, -host_alpha);
+		cudaDeviceSynchronize();
 
     // line 9:
     cuda_vecadd2<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_r, host_beta);
+		cudaDeviceSynchronize();
 
     // line 10:
     cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
+		cudaDeviceSynchronize();
 
 		// line 11 p1: compute <Ap,Ap>
 		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_Ap, cuda_Ap, cuda_ApAp);
+		cudaDeviceSynchronize();
 		cudaMemcpy(&host_ApAp, cuda_ApAp, sizeof(double), cudaMemcpyDeviceToHost);
 
 		// line 11 p2: compute <p,Ap>
 		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_Ap, cuda_pAp);
+		cudaDeviceSynchronize();
 		cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
 
 		// line 12: compute <r,r>
 		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
+		cudaDeviceSynchronize();
 		cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);
 
 		// break condition
@@ -162,7 +170,7 @@ void conjugate_gradient_pipe(int N, // number of unknows
 			break;
 
 		// line 13
-		host_alpha = host_rr / host pAp;
+		host_alpha = host_rr / host_pAp;
 	  cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
 
 		// line 14
@@ -266,7 +274,8 @@ void solve_system(int points_per_direction) {
 
 int main() {
 
-  solve_system(1000); // solves a system with 100*100 unknowns
+	int p_grid = 30;
+  solve_system(p_grid); // solves a system with p_grid*p_grid unknowns
 
   return EXIT_SUCCESS;
 }
