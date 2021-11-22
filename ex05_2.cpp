@@ -6,6 +6,8 @@
 
 #define GRID_SIZE 512
 #define BLOCK_SIZE 512
+//#define GRID_SIZE 32
+//#define BLOCK_SIZE 32
 
 
 // y = A * x
@@ -72,34 +74,32 @@ __global__ void cuda_cg_blue(const int N,
 //												 const double *alpha, const double *beta){
 
 
-	//__shared__ double shared_mem[BLOCK_SIZE];
 	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x * gridDim.x;
 
+	if (global_thread_idx == 0) *cuda_rr = 0;
+
 	double p_old, r_new;
-	//double rr = 0;
+	double rr = 0;
   for (size_t i = global_thread_idx; i < N; i += num_threads){
 		p_old = p[i];
 		
 		// line 7
-    x[i] += *alpha * p_old;
-    //x[i] += alpha * p[i];
+    x[i] += alpha * p_old;
 	
 		// line 8
 		r_new = r[i] - alpha * Ap[i]; 
 		r[i] = r_new;
-		//r[i] -= alpha * Ap[i]; 
 		
 		// line 9
 		p[i] = r_new + beta*p_old;
-		//p[i] = r[i] + beta*p[i];
 
 		// <r,r>
-		//rr += r_new * r_new;
+		rr += r_new * r_new;
 	}
-
+	
 	// reduction for scalar product <r,r>
-	/*
+	__shared__ double shared_mem[BLOCK_SIZE];
   shared_mem[threadIdx.x] = rr;
   for (int k = blockDim.x / 2; k > 0; k /= 2) {
     __syncthreads();
@@ -107,11 +107,11 @@ __global__ void cuda_cg_blue(const int N,
       shared_mem[threadIdx.x] += shared_mem[threadIdx.x + k];
     }
   }
-
-	if (global_thread_idx == 0) *cuda_rr = 0;
-  __syncthreads();
+		
+	// initializing *cuda_rr = 0 here is too late (no global thread sync is possible)
+	// therefore *cuda_rr = 0 happens in the red kernel instead
   if (threadIdx.x == 0) atomicAdd(cuda_rr, shared_mem[0]);
-	*/
+	
 }
 
 
@@ -366,7 +366,7 @@ void conjugate_gradient_pipe2(const int N, // number of unknows
 		cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
 
 		// line 12: compute <r,r>
-		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
+		//cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
 		cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);		
 		cudaDeviceSynchronize();
 
