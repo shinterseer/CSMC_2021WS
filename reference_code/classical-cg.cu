@@ -226,7 +226,7 @@ void solve_system(int points_per_direction) {
 
 int main() {
 
-  solve_system(1000); // solves a system with 100*100 unknowns
+  solve_system(100); // solves a system with 100*100 unknowns
 
   return EXIT_SUCCESS;
 }

@@ -4,10 +4,10 @@
 #include <iostream>
 #include <stdio.h>
 
-//#define GRID_SIZE 512
-//#define BLOCK_SIZE 512
-#define GRID_SIZE 32
-#define BLOCK_SIZE 32
+#define GRID_SIZE 512
+#define BLOCK_SIZE 512
+//#define GRID_SIZE 32
+//#define BLOCK_SIZE 32
 
 #define ALL_MASK 0xffffffff
 
@@ -68,19 +68,13 @@ __global__ void cuda_dot_product(const int N, const double *x, const double *y, 
   if (threadIdx.x == 0) atomicAdd(result, shared_mem[0]);
 }
 
+
 __global__ void cuda_cg_blue(const int N, 
 												 double *x, double *r, double *p, const double *Ap, double *rr, 
 												 const double alpha, const double beta){
-//__global__ void cuda_cg_blue(const int N, 
-//												 double *x, double *r, double *p, const double * Ap, double *cuda_rr, 
-//												 const double *alpha, const double *beta){
-
 
 	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x * gridDim.x;
-
-	// temp... this is not safe here
-	if (global_thread_idx == 0) *rr = 0;
 
 	double p_old, r_new;
 	double rr_local = 0;
@@ -111,27 +105,18 @@ __global__ void cuda_cg_blue(const int N,
     }
   }
 		
-	// initializing *cuda_rr = 0 here is too late (no global thread sync is possible)
-	// therefore *cuda_rr = 0 happens in the red kernel instead
-  if (threadIdx.x == 0) atomicAdd(rr, shared_mem[0]);
-	
+	// rr has been initialized outside the kernel
+  if (threadIdx.x == 0) atomicAdd(rr, shared_mem[0]);	
 }
 
 
 __global__ void cuda_cg_red(const int N, const int *csr_rowoffsets,
 														const int *csr_colindices, const double *csr_values,
 														const double *p, double *Ap, double *ApAp, double *pAp)
-{
-	
+{	
 	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x * gridDim.x;
 
-	// temp... this is not safe here
-	if (global_thread_idx == 0) {
-		*pAp = 0;
-		*ApAp = 0;
-	}
-	
 	double Ap_local;
 	double ApAp_local = 0;
 	double pAp_local = 0;
@@ -158,6 +143,7 @@ __global__ void cuda_cg_red(const int N, const int *csr_rowoffsets,
 		ApAp_local += __shfl_down_sync(ALL_MASK, ApAp_local, stride);			
 	}
 	__syncwarp();	
+	// ApAp is initialized outside the kernel
 	if ((threadIdx.x % warpSize) == 0) atomicAdd(ApAp, ApAp_local);
 
 
@@ -167,45 +153,8 @@ __global__ void cuda_cg_red(const int N, const int *csr_rowoffsets,
 		pAp_local += __shfl_down_sync(ALL_MASK, pAp_local, stride);			
 	}
 	__syncwarp();	
+	// pAp is initialized outside the kernel
 	if ((threadIdx.x % warpSize) == 0) atomicAdd(pAp, pAp_local);
-
-
-	
-	
-	/*
-	// reduction for scalar product <Ap,Ap>
-	__shared__ double shared_mem_ApAp[BLOCK_SIZE];
-  shared_mem_ApAp[threadIdx.x] = pAp_local;
-  for (int k = blockDim.x / 2; k > 0; k /= 2) {
-    __syncthreads();
-    if (threadIdx.x < k) {
-      shared_mem_ApAp[threadIdx.x] += shared_mem_ApAp[threadIdx.x + k];
-    }
-  }
-		
-	// initializing *ApPp = 0 here is too late (no global thread sync is possible)
-	// therefore *ApAp = 0 happens in the red kernel instead
-  if (threadIdx.x == 0) atomicAdd(ApAp, shared_mem_ApAp[0]);
-	*/
-  //atomicAdd(ApAp, ApAp_local);
-
-	/*
-	// reduction for scalar product <p,Ap>
-	__shared__ double shared_mem_pAp[BLOCK_SIZE];
-  shared_mem_pAp[threadIdx.x] = pAp_local;
-  for (int k = blockDim.x / 2; k > 0; k /= 2) {
-    __syncthreads();
-    if (threadIdx.x < k) {
-      shared_mem_pAp[threadIdx.x] += shared_mem_pAp[threadIdx.x + k];
-    }
-  }
-		
-	// initializing *pPp = 0 here is too late (no global thread sync is possible)
-	// therefore *pAp = 0 happens in the red kernel instead
-  if (threadIdx.x == 0) atomicAdd(pAp, shared_mem_pAp[0]);
-	*/
-	
-	 //atomicAdd(pAp, pAp_local);
 
 }
 
@@ -221,24 +170,17 @@ void conjugate_gradient_pipe(const int N, // number of unknows
   // initialize timer
   Timer timer;
 
-
+	const double zero = 0;
   // initialize work vectors:
-  //double alpha, beta;
   double *cuda_solution, *cuda_p, *cuda_r, *cuda_Ap;
   cudaMalloc(&cuda_p, sizeof(double) * N);
   cudaMalloc(&cuda_r, sizeof(double) * N);
   cudaMalloc(&cuda_Ap, sizeof(double) * N);
   cudaMalloc(&cuda_solution, sizeof(double) * N);
-	//double *cuda_scalar;
-  //cudaMalloc(&cuda_scalar, sizeof(double));
 	double *cuda_pAp, *cuda_rr, *cuda_ApAp;
   cudaMalloc(&cuda_pAp, sizeof(double));
   cudaMalloc(&cuda_rr, sizeof(double));
   cudaMalloc(&cuda_ApAp, sizeof(double));
-	//double *cuda_alpha, *cuda_beta;
-  //cudaMalloc(&cuda_alpha, sizeof(double));
-  //cudaMalloc(&cuda_beta, sizeof(double));
-
 
   // line 1: choose x_0
   std::fill(solution, solution + N, 0);
@@ -265,53 +207,27 @@ void conjugate_gradient_pipe(const int N, // number of unknows
   cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);
 	// line 4 final: alhpa = rr / pAp
 	double host_alpha = host_rr / host_pAp;
-  //cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
 	
 	// line 5: compute <Ap,Ap>
   cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_Ap, cuda_Ap, cuda_ApAp);
-  //cudaDeviceSynchronize();
 	double host_ApAp = 0;
   cudaMemcpy(&host_ApAp, cuda_ApAp, sizeof(double), cudaMemcpyDeviceToHost);
 	
 	// line 5: beta = alpha^2 * ApAp / rr - 1
 	double host_beta = host_alpha*host_alpha * host_ApAp / host_rr - 1;
-  //cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
 
   const double initial_rr = host_rr;
-
   int iters = 0;
   cudaDeviceSynchronize();
   timer.reset();
   while (1) {
 
-		// line 7
-		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_solution, cuda_p, host_alpha);
-		cudaDeviceSynchronize();
+		//cudaDeviceSynchronize();
 
-		// line 8
-		cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_Ap, (-1)*host_alpha);
-		cudaDeviceSynchronize();
-
-    // line 9:
-    cuda_vecadd2<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_r, host_beta);
-		cudaDeviceSynchronize();
-
-    // line 10:
-    cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
-		cudaDeviceSynchronize();
-
-		// line 11 p1: compute <Ap,Ap>
-		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_Ap, cuda_Ap, cuda_ApAp);
-		cudaDeviceSynchronize();
-		cudaMemcpy(&host_ApAp, cuda_ApAp, sizeof(double), cudaMemcpyDeviceToHost);
-
-		// line 11 p2: compute <p,Ap>
-		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_Ap, cuda_pAp);
-		cudaDeviceSynchronize();
-		cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
-
-		// line 12: compute <r,r>
-		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
+		cudaMemcpy(cuda_rr, &zero, sizeof(double), cudaMemcpyHostToDevice);			
+		cuda_cg_blue<<<GRID_SIZE, BLOCK_SIZE>>>(N, 
+														 cuda_solution, cuda_r, cuda_p, cuda_Ap, cuda_rr,
+														 host_alpha, host_beta);
 		cudaDeviceSynchronize();
 		cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);
 
@@ -319,174 +235,23 @@ void conjugate_gradient_pipe(const int N, // number of unknows
     if (std::sqrt(host_rr / initial_rr) < 1e-6) 
 			break;
 
-		// line 13
-		host_alpha = host_rr / host_pAp;
-	  //cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
-
-		// line 14
-		host_beta = host_alpha*host_alpha * host_ApAp / host_rr - 1;
-		//cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
-
-    if (iters > max_its)
-      break; // solver didn't converge
-    ++iters;
-  }
-	
-	
-  cudaMemcpy(solution, cuda_solution, sizeof(double) * N, cudaMemcpyDeviceToHost);
-
-  cudaDeviceSynchronize();
-  std::cout << "Time elapsed: " << timer.get() << " (" << timer.get() / iters << " per iteration)" << std::endl;
-
-  if (iters > max_its)
-    std::cout << "Conjugate Gradient did NOT converge within " << max_its << " iterations"
-              << std::endl;
-  else
-    std::cout << "Conjugate Gradient converged in " << iters << " iterations."
-              << std::endl;
-
-  cudaFree(cuda_p);
-  cudaFree(cuda_r);
-  cudaFree(cuda_Ap);
-  cudaFree(cuda_solution);
-  //cudaFree(cuda_scalar);
-}
-
-
-void conjugate_gradient_pipe2(const int N, // number of unknows
-                        const int *csr_rowoffsets, const int *csr_colindices,
-                        const double *csr_values, const double *rhs, double *solution,
-												const int max_its = 10000)
-//, double *init_guess)   // feel free to add a nonzero initial guess as needed
-{
-  // initialize timer
-  Timer timer;
-
-	const double zero = 0;
-  // initialize work vectors:
-  //double alpha, beta;
-  double *cuda_solution, *cuda_p, *cuda_r, *cuda_Ap;
-  cudaMalloc(&cuda_p, sizeof(double) * N);
-  cudaMalloc(&cuda_r, sizeof(double) * N);
-  cudaMalloc(&cuda_Ap, sizeof(double) * N);
-  cudaMalloc(&cuda_solution, sizeof(double) * N);
-	//double *cuda_scalar;
-  //cudaMalloc(&cuda_scalar, sizeof(double));
-	double *cuda_pAp, *cuda_rr, *cuda_ApAp;
-  cudaMalloc(&cuda_pAp, sizeof(double));
-  cudaMalloc(&cuda_rr, sizeof(double));
-  cudaMalloc(&cuda_ApAp, sizeof(double));
-	//double *cuda_alpha, *cuda_beta;
-  //cudaMalloc(&cuda_alpha, sizeof(double));
-  //cudaMalloc(&cuda_beta, sizeof(double));
-
-
-  // line 1: choose x_0
-  std::fill(solution, solution + N, 0);
-  cudaMemcpy(cuda_solution, solution, sizeof(double) * N, cudaMemcpyHostToDevice);
-	
-	// line 2: p_0 = b
-  cudaMemcpy(cuda_p, rhs, sizeof(double) * N, cudaMemcpyHostToDevice); 
-	// line 2: r_0 = b
-  cudaMemcpy(cuda_r, rhs, sizeof(double) * N, cudaMemcpyHostToDevice);
-
-	// line 3: compute Ap
-	cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
-  cudaDeviceSynchronize();
-
-	// line 4: compute <p,Ap>
-  cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_Ap, cuda_pAp);
-  //cudaDeviceSynchronize();
-	double host_pAp = 0;
-  cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);	
-	// line 4: compute <r,r>
-  cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
-  //cudaDeviceSynchronize();
-  double host_rr = 0;
-  cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);
-	// line 4 final: alhpa = rr / pAp
-	double host_alpha = host_rr / host_pAp;
-  //cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
-	
-	// line 5: compute <Ap,Ap>
-  cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_Ap, cuda_Ap, cuda_ApAp);
-  //cudaDeviceSynchronize();
-	double host_ApAp = 0;
-  cudaMemcpy(&host_ApAp, cuda_ApAp, sizeof(double), cudaMemcpyDeviceToHost);
-	
-	// line 5: beta = alpha^2 * ApAp / rr - 1
-	double host_beta = host_alpha*host_alpha * host_ApAp / host_rr - 1;
-  //cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
-
-  const double initial_rr = host_rr;
-
-  int iters = 0;
-  cudaDeviceSynchronize();
-  timer.reset();
-  while (1) {
-
-		// line 7
-		//cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_solution, cuda_p, host_alpha);
-		//cudaDeviceSynchronize();
-
-		// line 8
-		//cuda_vecadd<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_Ap, (-1)*host_alpha);
-		//cudaDeviceSynchronize();
-
-    // line 9:
-    //cuda_vecadd2<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_r, host_beta);
-		//cudaDeviceSynchronize();
-
-		cudaDeviceSynchronize();
-		//cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
-		//cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
 		
-		cuda_cg_blue<<<GRID_SIZE, BLOCK_SIZE>>>(N, 
-														 cuda_solution, cuda_r, cuda_p, cuda_Ap, cuda_rr,
-														 host_alpha, host_beta);
-		cudaDeviceSynchronize();
-		
-		
-		//cudaMemcpy(cuda_ApAp, &zero, sizeof(double), cudaMemcpyHostToDevice);		
-		//cudaMemcpy(cuda_pAp, &zero, sizeof(double), cudaMemcpyHostToDevice);		
+		cudaMemcpy(cuda_ApAp, &zero, sizeof(double), cudaMemcpyHostToDevice);		
+		cudaMemcpy(cuda_pAp, &zero, sizeof(double), cudaMemcpyHostToDevice);		
 		cuda_cg_red<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets,
 														csr_colindices, csr_values,
 														cuda_p, cuda_Ap, cuda_ApAp, cuda_pAp);
 		cudaDeviceSynchronize();
-
 		
-		
-    // line 10:
-    //cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
-		//cudaDeviceSynchronize();
-
-		// line 11 p1: compute <Ap,Ap>
-		//cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_Ap, cuda_Ap, cuda_ApAp);
-		//cudaDeviceSynchronize();
 		cudaMemcpy(&host_ApAp, cuda_ApAp, sizeof(double), cudaMemcpyDeviceToHost);
-
-		// line 11 p2: compute <p,Ap>
-		//cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_Ap, cuda_pAp);
-		//cudaDeviceSynchronize();
 		cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
-
-		// line 12: compute <r,r>
-		//cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
-		cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);		
-		//cudaDeviceSynchronize();
-
-		// break condition
-    if (std::sqrt(host_rr / initial_rr) < 1e-6) 
-			break;
 
 		// line 13
 		host_alpha = host_rr / host_pAp;
-	  //cudaMemcpy(cuda_alpha, &host_alpha, sizeof(double), cudaMemcpyHostToDevice);
 
 		// line 14
 		host_beta = host_alpha*host_alpha * host_ApAp / host_rr - 1;
-		//cudaMemcpy(cuda_beta, &host_beta, sizeof(double), cudaMemcpyHostToDevice);
-
+		
     if (iters > max_its)
       break; // solver didn't converge
     ++iters;
@@ -509,7 +274,9 @@ void conjugate_gradient_pipe2(const int N, // number of unknows
   cudaFree(cuda_r);
   cudaFree(cuda_Ap);
   cudaFree(cuda_solution);
-  //cudaFree(cuda_scalar);
+  cudaFree(cuda_pAp);
+  cudaFree(cuda_rr);
+  cudaFree(cuda_ApAp);	
 }
 
 
@@ -564,8 +331,7 @@ void solve_system(int points_per_direction, const int max_its = 10000) {
   //
   // Call Conjugate Gradient implementation with GPU arrays
   //
-  //conjugate_gradient_pipe(N, cuda_csr_rowoffsets, cuda_csr_colindices, cuda_csr_values, rhs, solution, max_its);
-  conjugate_gradient_pipe2(N, cuda_csr_rowoffsets, cuda_csr_colindices, cuda_csr_values, rhs, solution, max_its);
+  conjugate_gradient_pipe(N, cuda_csr_rowoffsets, cuda_csr_colindices, cuda_csr_values, rhs, solution, max_its);
 
   //
   // Check for convergence:
@@ -588,6 +354,7 @@ int main() {
 
 	int p_grid = 100;
   solve_system(p_grid); // solves a system with p_grid*p_grid unknowns
+	cudaDeviceReset();  // for CUDA leak checker to work		
 
   return EXIT_SUCCESS;
 }
