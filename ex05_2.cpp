@@ -4,10 +4,10 @@
 #include <iostream>
 #include <stdio.h>
 
-#define GRID_SIZE 512
-#define BLOCK_SIZE 512
-//#define GRID_SIZE 32
-//#define BLOCK_SIZE 32
+//#define GRID_SIZE 512
+//#define BLOCK_SIZE 512
+#define GRID_SIZE 32
+#define BLOCK_SIZE 32
 
 
 // y = A * x
@@ -118,7 +118,7 @@ __global__ void cuda_cg_blue(const int N,
 
 __global__ void cuda_cg_red(const int N, const int *csr_rowoffsets,
 														const int *csr_colindices, const double *csr_values,
-														const double *p, double *Ap, double *cuda_ApAp, double *cuda_pAp)
+														const double *p, double *Ap, double *ApAp, double *pAp)
 {
 	
 	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -126,28 +126,59 @@ __global__ void cuda_cg_red(const int N, const int *csr_rowoffsets,
 
 	// temp... this is not safe here
 	if (global_thread_idx == 0) {
-		*cuda_pAp = 0;
-		*cuda_ApAp = 0;
+		*pAp = 0;
+		*ApAp = 0;
 	}
 	
-	double Ap_loc;
-	double ApAp_loc = 0;
-	double pAp_loc = 0;
+	double Ap_local;
+	double ApAp_local = 0;
+	double pAp_local = 0;
   for (int i = global_thread_idx; i < N; i += num_threads) {
     double sum = 0;
     for (int k = csr_rowoffsets[i]; k < csr_rowoffsets[i + 1]; k++) {
       sum += csr_values[k] * p[csr_colindices[k]];
     }
-		Ap_loc = sum;
-    Ap[i] = Ap_loc;
+		Ap_local = sum;
 		
+		// Ap
+    Ap[i] = Ap_local;
 		
-		
-		
+		// <p,Ap>		
+		pAp_local += p[i] * Ap_local;
+		// <Ap,Ap>				
+		ApAp_local += Ap_local * Ap_local;
   }
 	
-	
-	
+	/*
+	// reduction for scalar product <p,Ap>
+	__shared__ double shared_mem_pAp[BLOCK_SIZE];
+  shared_mem_pAp[threadIdx.x] = pAp_local;
+  for (int k = blockDim.x / 2; k > 0; k /= 2) {
+    __syncthreads();
+    if (threadIdx.x < k) {
+      shared_mem_pAp[threadIdx.x] += shared_mem_pAp[threadIdx.x + k];
+    }
+  }
+		
+	// initializing *pPp = 0 here is too late (no global thread sync is possible)
+	// therefore *pAp = 0 happens in the red kernel instead
+  if (threadIdx.x == 0) atomicAdd(pAp, shared_mem_pAp[0]);
+
+
+	// reduction for scalar product <Ap,Ap>
+	__shared__ double shared_mem_ApAp[BLOCK_SIZE];
+  shared_mem_ApAp[threadIdx.x] = pAp_local;
+  for (int k = blockDim.x / 2; k > 0; k /= 2) {
+    __syncthreads();
+    if (threadIdx.x < k) {
+      shared_mem_ApAp[threadIdx.x] += shared_mem_ApAp[threadIdx.x + k];
+    }
+  }
+		
+	// initializing *ApPp = 0 here is too late (no global thread sync is possible)
+	// therefore *ApAp = 0 happens in the red kernel instead
+  if (threadIdx.x == 0) atomicAdd(ApAp, shared_mem_ApAp[0]);
+	*/
 }
 
 
@@ -387,24 +418,31 @@ void conjugate_gradient_pipe2(const int N, // number of unknows
 														 host_alpha, host_beta);
 		cudaDeviceSynchronize();
 		
-    // line 10:
-    cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
+		cuda_cg_red<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets,
+														csr_colindices, csr_values,
+														cuda_p, cuda_Ap, cuda_ApAp, cuda_pAp);
 		cudaDeviceSynchronize();
+
+		
+		
+    // line 10:
+    //cuda_csr_matvec_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, csr_rowoffsets, csr_colindices, csr_values, cuda_p, cuda_Ap);
+		//cudaDeviceSynchronize();
 
 		// line 11 p1: compute <Ap,Ap>
 		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_Ap, cuda_Ap, cuda_ApAp);
-		cudaDeviceSynchronize();
+		//cudaDeviceSynchronize();
 		cudaMemcpy(&host_ApAp, cuda_ApAp, sizeof(double), cudaMemcpyDeviceToHost);
 
 		// line 11 p2: compute <p,Ap>
 		cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_p, cuda_Ap, cuda_pAp);
-		cudaDeviceSynchronize();
+		//cudaDeviceSynchronize();
 		cudaMemcpy(&host_pAp, cuda_pAp, sizeof(double), cudaMemcpyDeviceToHost);
 
 		// line 12: compute <r,r>
 		//cuda_dot_product<<<GRID_SIZE, BLOCK_SIZE>>>(N, cuda_r, cuda_r, cuda_rr);
 		cudaMemcpy(&host_rr, cuda_rr, sizeof(double), cudaMemcpyDeviceToHost);		
-		cudaDeviceSynchronize();
+		//cudaDeviceSynchronize();
 
 		// break condition
     if (std::sqrt(host_rr / initial_rr) < 1e-6) 
