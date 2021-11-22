@@ -67,7 +67,7 @@ __global__ void cuda_dot_product(const int N, const double *x, const double *y, 
 }
 
 __global__ void cuda_cg_blue(const int N, 
-												 double *x, double *r, double *p, const double * Ap, double *cuda_rr, 
+												 double *x, double *r, double *p, const double *Ap, double *rr, 
 												 const double alpha, const double beta){
 //__global__ void cuda_cg_blue(const int N, 
 //												 double *x, double *r, double *p, const double * Ap, double *cuda_rr, 
@@ -77,10 +77,11 @@ __global__ void cuda_cg_blue(const int N,
 	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x * gridDim.x;
 
-	if (global_thread_idx == 0) *cuda_rr = 0;
+	// temp... this is not safe here
+	if (global_thread_idx == 0) *rr = 0;
 
 	double p_old, r_new;
-	double rr = 0;
+	double rr_local = 0;
   for (size_t i = global_thread_idx; i < N; i += num_threads){
 		p_old = p[i];
 		
@@ -95,12 +96,12 @@ __global__ void cuda_cg_blue(const int N,
 		p[i] = r_new + beta*p_old;
 
 		// <r,r>
-		rr += r_new * r_new;
+		rr_local += r_new * r_new;
 	}
 	
 	// reduction for scalar product <r,r>
 	__shared__ double shared_mem[BLOCK_SIZE];
-  shared_mem[threadIdx.x] = rr;
+  shared_mem[threadIdx.x] = rr_local;
   for (int k = blockDim.x / 2; k > 0; k /= 2) {
     __syncthreads();
     if (threadIdx.x < k) {
@@ -110,7 +111,42 @@ __global__ void cuda_cg_blue(const int N,
 		
 	// initializing *cuda_rr = 0 here is too late (no global thread sync is possible)
 	// therefore *cuda_rr = 0 happens in the red kernel instead
-  if (threadIdx.x == 0) atomicAdd(cuda_rr, shared_mem[0]);
+  if (threadIdx.x == 0) atomicAdd(rr, shared_mem[0]);
+	
+}
+
+
+__global__ void cuda_cg_red(const int N, const int *csr_rowoffsets,
+														const int *csr_colindices, const double *csr_values,
+														const double *p, double *Ap, double *cuda_ApAp, double *cuda_pAp)
+{
+	
+	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int num_threads = blockDim.x * gridDim.x;
+
+	// temp... this is not safe here
+	if (global_thread_idx == 0) {
+		*cuda_pAp = 0;
+		*cuda_ApAp = 0;
+	}
+	
+	double Ap_loc;
+	double ApAp_loc = 0;
+	double pAp_loc = 0;
+  for (int i = global_thread_idx; i < N; i += num_threads) {
+    double sum = 0;
+    for (int k = csr_rowoffsets[i]; k < csr_rowoffsets[i + 1]; k++) {
+      sum += csr_values[k] * p[csr_colindices[k]];
+    }
+		Ap_loc = sum;
+    Ap[i] = Ap_loc;
+		
+		
+		
+		
+  }
+	
+	
 	
 }
 
