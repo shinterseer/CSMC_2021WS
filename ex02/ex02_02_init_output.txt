@@ -1,0 +1,47 @@
+[Compilation successful]
+Run output
+
+initializing on GPU
+-------------------
+repetitions = 1
+size; elapsed time in seconds;
+100;2.240e-01
+300;4.686e-01
+1000;2.513e-01
+3000;5.497e-01
+10000;1.621e+00
+30000;4.975e+00
+
+initializing on CPU
+-------------------
+repetitions = 1
+size; elapsed time in seconds;
+100;2.000e-06
+300;4.000e-06
+1000;6.000e-06
+3000;1.800e-05
+10000;6.700e-05
+30000;1.830e-04
+
+copy it over (assume already initialized)
+-------------------
+repetitions = 1
+size; elapsed time in seconds;
+100;6.700e-05
+300;5.700e-05
+1000;5.500e-05
+3000;5.300e-05
+10000;8.100e-05
+30000;5.500e-05
+
+individual transfer (assume already initialized)
+-------------------
+-------------------
+repetitions = 1
+size; elapsed time in seconds;
+100;8.900e-05
+300;1.750e-04
+1000;4.880e-04
+3000;1.286e-03
+10000;4.126e-03
+30000;1.215e-02
