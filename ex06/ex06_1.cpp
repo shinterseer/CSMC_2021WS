@@ -4,9 +4,13 @@
 #include <iostream>
 #include <stdio.h>
 
-#define GRID_SIZE 4
-#define BLOCK_SIZE 8
+#define GRID_SIZE 256
+#define BLOCK_SIZE 256
 
+
+
+// ___________________________ Device Kernels _____________________________
+// ________________________________________________________________________
 
 
 __global__ void scan_kernel_1(double const *X,
@@ -155,7 +159,21 @@ __global__ void scan_kernel_3(double *Y, int N,
 }
 
 
+__global__
+void device_excl_to_incl(const double *device_input, double *device_output, int N)
+{
+	int num_threads = blockDim.x * gridDim.x;
+	int thread_id = blockDim.x * blockIdx.x + threadIdx.x;
 
+	for(size_t i = thread_id; i < N; i += num_threads)
+		device_output[i] += device_input[i];	
+}
+
+
+
+
+// ____________________________ Host Programs _____________________________
+// ________________________________________________________________________
 
 void exclusive_scan(double const * input,
                     double       * output, int N)
@@ -178,6 +196,15 @@ void exclusive_scan(double const * input,
 }
 
 
+void inclusive_scan1(const double *device_input, double *device_output, int N)
+{
+	// get exclusive scan
+  exclusive_scan(device_input, device_output, N);
+
+	// add input to output
+	device_excl_to_incl<<<GRID_SIZE, BLOCK_SIZE>>>(device_input, device_output, N);
+}
+
 void inclusive_scan2(double const * input,
                     double       * output, int N)
 {
@@ -199,85 +226,142 @@ void inclusive_scan2(double const * input,
 }
 
 
+// __________________________ Execution wrapper ___________________________
+// ________________________________________________________________________
 
-
-__global__
-void device_excl_to_incl(const double *device_input, double *device_output, int N)
+template<typename CALLABLE, typename ...ARGS>
+double execution_wrapper(int grid_size,
+												 int block_size,
+												 int repetitions,
+												 bool device_function,
+												 CALLABLE function, 
+												 ARGS&& ... arg_pack)
 {
-	int num_threads = blockDim.x * gridDim.x;
-	int thread_id = blockDim.x * blockIdx.x + threadIdx.x;
+	Timer single_timer;	
+	double elapsed_time = 0;
+	double median_time = 0;
+	
+	// vector of runtimes to calculate median time
+	std::vector<double> execution_times;		
+	
+	
 
-	for(size_t i = thread_id; i < N; i += num_threads)
-		device_output[i] += device_input[i];	
+	for(int j=0; j<repetitions; j++){
+		
+		if (device_function){
+			cudaDeviceSynchronize(); //make sure gpu is ready
+			single_timer.reset();
+
+			function<<<grid_size,block_size>>>(std::forward<ARGS>(arg_pack) ...);
+
+			cudaDeviceSynchronize(); //make sure gpu is done			
+			elapsed_time = single_timer.get();
+			
+		}
+		else{
+			cudaDeviceSynchronize(); //make sure gpu is ready
+			single_timer.reset();
+
+			function(std::forward<ARGS>(arg_pack) ...);
+
+			cudaDeviceSynchronize(); //make sure gpu is done			
+			elapsed_time = single_timer.get();			
+		}
+			
+		execution_times.push_back(elapsed_time);
+	}
+	
+	std::sort(execution_times.begin(), execution_times.end());
+	median_time = execution_times[int(repetitions/2)];
+	return median_time;
 }
 
-void inclusive_scan1(const double *device_input, double *device_output, int N)
-{
-	// get exclusive scan
-  exclusive_scan(device_input, device_output, N);
-
-	// add input to output
-	device_excl_to_incl<<<GRID_SIZE, BLOCK_SIZE>>>(device_input, device_output, N);
-}
 
 
+// _________________________________ Main ________________________________
+// ________________________________________________________________________
 
 int main() {
 
-  int N = 200;
+  //int N = 2000;
+	std::vector<size_t> N = {size_t(1e4), size_t(3e4), 
+													 size_t(1e5), size_t(3e5), 
+													 size_t(1e6), size_t(3e6), 
+													 size_t(1e7), size_t(3e7), 
+													 size_t(1e8), size_t(3e8), 
+													};
+	
+	
+	bool sanity_check = false;
+	double execution_time = 0;
+	int repetitions = 11;
 
-  //
-  // Allocate host arrays for reference
-  //
-  double *x = (double *)malloc(sizeof(double) * N);
-  double *y = (double *)malloc(sizeof(double) * N);
-  double *z = (double *)malloc(sizeof(double) * N);
-  std::fill(x, x + N, 1);
-
-  // reference calculation:
-  y[0] = 0;
-  for (std::size_t i=1; i<N; ++i) y[i] = y[i-1] + x[i-1];
-
-  //
-  // Allocate CUDA-arrays
-  //
-  double *cuda_x, *cuda_y;
-  cudaMalloc(&cuda_x, sizeof(double) * N);
-  cudaMalloc(&cuda_y, sizeof(double) * N);
-  cudaMemcpy(cuda_x, x, sizeof(double) * N, cudaMemcpyHostToDevice);
-
+	std::cout << "N; elapsed time in s" << std::endl;
 
   // Perform the exclusive scan and obtain results
-  //exclusive_scan(cuda_x, cuda_y, N);
-  //inclusive_scan1(cuda_x, cuda_y, N);
-  inclusive_scan2(cuda_x, cuda_y, N);
-	//cudaDeviceSynchronize();
-	//inclusive_scan(cuda_x, cuda_y, N);
-  cudaMemcpy(z, cuda_y, sizeof(double) * N, cudaMemcpyDeviceToHost);
 
-  //
-  // Print first few entries for reference
-  //
-  std::cout << "CPU y: ";
-  for (int i=0; i<10; ++i) std::cout << y[i] << " ";
-  std::cout << " ... ";
-  for (int i=N-10; i<N; ++i) std::cout << y[i] << " ";
-  std::cout << std::endl;
 
-  std::cout << "GPU y: ";
-  for (int i=0; i<10; ++i) std::cout << z[i] << " ";
-  std::cout << " ... ";
-  for (int i=N-10; i<N; ++i) std::cout << z[i] << " ";
-  std::cout << std::endl;
+	for(int ii = 0; ii < N.size(); ++ii){
 
-  //
-  // Clean up:
-  //
-  free(x);
-  free(y);
-  free(z);
-  cudaFree(cuda_x);
-  cudaFree(cuda_y);
+		//
+		// Allocate host arrays for reference
+		//
+		double *x = (double *)malloc(sizeof(double) * N[ii]);
+		double *y = (double *)malloc(sizeof(double) * N[ii]);
+		double *z = (double *)malloc(sizeof(double) * N[ii]);
+		
+		
+		std::fill(x, x +N[ii], 1);
+
+		//
+		// Allocate CUDA-arrays
+		//
+		double *cuda_x, *cuda_y;
+		cudaMalloc(&cuda_x, sizeof(double) * N[ii]);
+		cudaMalloc(&cuda_y, sizeof(double) * N[ii]);
+		cudaMemcpy(cuda_x, x, sizeof(double) * N[ii], cudaMemcpyHostToDevice);
+
+
+		// reference calculation:
+		if (sanity_check){
+			y[0] = 0;
+			for (std::size_t i=1; i<N[ii]; ++i) y[i] = y[i-1] + x[i-1];		
+		}
+
+		execution_time = execution_wrapper(GRID_SIZE, BLOCK_SIZE, repetitions, false, 
+																			 inclusive_scan2, cuda_x, cuda_y, N[ii]);
+
+		printf("%i;",N[ii]);
+		printf("%5.8e\n",execution_time);
+		
+			cudaMemcpy(z, cuda_y, sizeof(double) * N[ii], cudaMemcpyDeviceToHost);
+	
+		//
+		// Print first few entries for reference
+		//
+		if (sanity_check){
+			std::cout << "CPU y: ";
+			for (int i=0; i<10; ++i) std::cout << y[i] << " ";
+			std::cout << " ... ";
+			for (int i=N[ii]-10; i<N[ii]; ++i) std::cout << y[i] << " ";
+			std::cout << std::endl;
+
+			std::cout << "GPU y: ";
+			for (int i=0; i<10; ++i) std::cout << z[i] << " ";
+			std::cout << " ... ";
+			for (int i=N[ii]-10; i<N[ii]; ++i) std::cout << z[i] << " ";
+			std::cout << std::endl;		
+		}
+
+		//
+		// Clean up:
+		//
+		free(x);
+		free(y);
+		free(z);
+		cudaFree(cuda_x);
+		cudaFree(cuda_y);		
+	}
   return EXIT_SUCCESS;
 }
 
