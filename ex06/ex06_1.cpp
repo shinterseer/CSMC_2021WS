@@ -221,6 +221,7 @@ void inclusive_scan1(const double *device_input, double *device_output, int N)
 }
 
 
+
 int main() {
 
   int N = 200;
