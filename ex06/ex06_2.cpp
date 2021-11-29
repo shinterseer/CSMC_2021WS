@@ -31,21 +31,6 @@ __global__ void cuda_csr_matvec_product(const int N, const int *csr_rowoffsets,
   }
 }
 
-// cuda_vecadd: x <- x + alpha * y
-__global__ void cuda_vecadd(const int N, double *x, const double *y, const double alpha)
-{
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x)
-    x[i] += alpha * y[i];
-}
-
-
-// cuda_vecadd2: x <- y + alpha * x
-__global__ void cuda_vecadd2(const int N, double *x, const double *y, const double alpha)
-{
-  for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < N; i += blockDim.x * gridDim.x)
-    x[i] = y[i] + alpha * x[i];
-}
-
 // result = (x, y)
 __global__ void cuda_dot_product(const int N, const double *x, const double *y, double *result)
 {
@@ -289,56 +274,6 @@ void conjugate_gradient_pipe(const int N, // number of unknows
 // ________________________________________________________________________
 
 
-void assembleA(int *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
-//void assembleA(double *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
-	
-	for (int row = 0;	
- 			 row < N*M;
-			 ++row) {
-				 
-			int i = row / M;
-			int j = row % M;
-			int this_row_offset = csr_rowoffsets[row];
-
-			int index = i * M + j;
-
-
-			// bottom side (S)
-			if (i > 0){
-				csr_colindices[this_row_offset] = index - M;
-				csr_values[this_row_offset] = -1;				
-				this_row_offset += 1;
-			};
-
-			// left side (W)
-			if (j > 0) {
-				csr_colindices[this_row_offset] = index - 1;
-				csr_values[this_row_offset] = -1;
-				this_row_offset += 1;
-			}
-
-			// diagonal element (C)
-			csr_colindices[this_row_offset] = index;
-			csr_values[this_row_offset] = 4;
-			this_row_offset += 1;
-			
-			// right side (E)
-			if (j < M-1){
-				csr_colindices[this_row_offset] = index + 1;
-				csr_values[this_row_offset] = -1;
-				this_row_offset += 1;
-			}
-
-			// top side (N)
-			if (i < M-1){
-				csr_colindices[this_row_offset] = index + M;
-				csr_values[this_row_offset] = -1;				
-				this_row_offset += 1;
-			}
-			
-	}
-}
-
 __global__
 void device_assembleA(int* num_entries, int *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
 //void assembleA(double *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
@@ -401,38 +336,6 @@ void device_assembleA(int* num_entries, int *csr_rowoffsets, double *csr_values,
 }
 
 
-
-//__global__
-void num_nonzero_entries(int N, int M, int *output){
-	// inidices and dimensions of physical grid: 
-	// i ... row idx, j ... col idx
-	// N ... row dim, M ... col dim
-	// adressing: grid(i,j)
-
-	// system matrix A is of dimensions N*M x N*M
-	// row (i*M + j) represents the gridpoint grid[i,j]
-
-	
-	for (size_t i = 0; i < N; i++){
-		for (size_t j = 0; j < M; j++){			
-			// how many nonzero entries does row i*M + j have
-			output[i*M + j] = 0;
-			
-			// diagonal element (C)
-			output[i*M + j]++;
-			// left side (W)
-			if (i > 0) output[i*M + j]++;
-			// right side (E)
-			if (i < N-1) output[i*M + j]++;
-			// bottom side (S)
-			if (j > 0) output[i*M + j]++;
-			// top side (N)
-			if (j < M-1) output[i*M + j]++;
-		}		
-	}
-}
-
-
 __global__
 void device_num_nonzero_entries(int N, int M, int *output){
 	// inidices and dimensions of physical grid: 
@@ -465,8 +368,6 @@ void device_num_nonzero_entries(int N, int M, int *output){
 		}		
 	}
 }
-
-
 
 
 // ___________________________ Prefix Sum _________________________________
@@ -580,11 +481,6 @@ void device_excl_to_incl(const double *device_input, double *device_output, int 
 }
 
 
-
-
-// ____________________________ Host Programs _____________________________
-// ________________________________________________________________________
-
 void exclusive_scan(int const * input,
                     int       * output, int N)
 {
@@ -657,6 +553,10 @@ double execution_wrapper(int grid_size,
 }
 
 
+// _________________________ Host Programs ________________________________
+// ________________________________________________________________________
+
+
 void my_generate_system(int N, int M, 
 												int *device_csr_rowoffsets, int *device_csr_colindices,
                         double *device_csr_values)
@@ -699,7 +599,8 @@ void solve_system(int points_per_direction, const int max_its = 10000, bool bm_s
   cudaMalloc(&cuda_csr_colindices, sizeof(double) * 5 * N);
   cudaMalloc(&cuda_csr_values, sizeof(double) * 5 * N);
 	
-	
+
+	// if benchmark system assembly
 	if (bm_sa){
 		double time = 0;
 		int repetitions = 7;
@@ -718,12 +619,9 @@ void solve_system(int points_per_direction, const int max_its = 10000, bool bm_s
 														 csr_values);
 		printf("%5.8e\n",time);
 	}
-	
-	
 
 
-
-	// if not benchmark system assembly
+	// if not benchmark system assembly - run CG solver
 	if (!bm_sa){
 		
 		std::cout << "Solving Ax=b with " << N << " unknowns." << std::endl;
@@ -784,10 +682,13 @@ void solve_system(int points_per_direction, const int max_its = 10000, bool bm_s
 
 int main() {
 	
-	int pgrid = 100;
 	int maxits = 10000;
-	bool bm_sa = true;
+	bool bm_sa = false;
 
+	//std::vector<int> pgrids = {1920};
+	//std::vector<int> pgrids = {3840};
+
+	//std::vector<int> pgrids = {30, 60, 120};
 	std::vector<int> pgrids = {30, 60, 120, 240, 480, 960};
 	//std::vector<int> pgrids = {30, 60, 120, 240, 480, 960, 1920};
 
