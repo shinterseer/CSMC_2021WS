@@ -657,62 +657,33 @@ double execution_wrapper(int grid_size,
 }
 
 
-void my_generate_system(int N, int M, int *csr_rowoffsets, int *csr_colindices,
-                        double *csr_values,
+void my_generate_system(int N, int M, 
 												int *device_csr_rowoffsets, int *device_csr_colindices,
                         double *device_csr_values)
 {
-		//int N = 100;
-		//int M = 100;
-		
-		int *num_entries = (int *)malloc(sizeof(int) * N*M);
-		//int *csr_rowoffsets = (int *)malloc(sizeof(int) * N*M + 1);
-		
+				
 		int* device_num_entries;
 		cudaMalloc(&device_num_entries, sizeof(int) * N*M);
 		
-		//int* device_csr_rowoffsets;
-		//cudaMalloc(&device_csr_rowoffsets, sizeof(int) * N*M + 1);	
-
-		// get number of nonzero entries per row
-		//num_nonzero_entries(N, M, num_entries);
-		//cudaMemcpy(device_num_entries, num_entries, sizeof(int) * N*M, cudaMemcpyHostToDevice);
-
 		device_num_nonzero_entries<<<256,256>>>(N, M, device_num_entries);
 		cudaDeviceSynchronize();
-		//cudaMemcpy(num_entries, device_num_entries, sizeof(int) * N*M, cudaMemcpyDeviceToHost);
 		
 		// get row offsets for CSR as exclusive prefix sum of num_entries	
 		exclusive_scan(device_num_entries, device_csr_rowoffsets, N*M);
-		
-		
-		//cudaMemcpy(csr_rowoffsets, device_csr_rowoffsets, sizeof(int) * N*M, cudaMemcpyDeviceToHost);	
-		//csr_rowoffsets[N*M] = csr_rowoffsets[N*M - 1] + num_entries[N*M - 1];
-		//cudaMemcpy(device_csr_rowoffsets, csr_rowoffsets, sizeof(int) * (N*M+1), cudaMemcpyHostToDevice);	
-			
-		//int num_values = csr_rowoffsets[N*M];
-		//int *csr_colindices = (int *)malloc(sizeof(int) * num_values);
-		//double *csr_values = (double *)malloc(sizeof(double) * num_values);
 
-		//assembleA(csr_rowoffsets, csr_values, csr_colindices, N, M);
-		device_assembleA<<<GRID_SIZE,BLOCK_SIZE>>>(device_num_entries, device_csr_rowoffsets, device_csr_values, device_csr_colindices, N, M);
-
+		// assemble csr matrix
+		device_assembleA<<<GRID_SIZE,BLOCK_SIZE>>>(device_num_entries, device_csr_rowoffsets, 
+																							 device_csr_values, device_csr_colindices, N, M);
 }
 
-void solve_system(int points_per_direction, const int max_its = 10000) {
+void solve_system(int points_per_direction, const int max_its = 10000, bool bm_sa = false) {
 
   int N = points_per_direction *
           points_per_direction; // number of unknows to solve for
 
-  std::cout << "Solving Ax=b with " << N << " unknowns." << std::endl;
 
   //
   // Allocate CSR arrays.
-  //
-  // Note: Usually one does not know the number of nonzeros in the system matrix
-  // a-priori.
-  //       For this exercise, however, we know that there are at most 5 nonzeros
-  //       per row in the system matrix, so we can allocate accordingly.
   //
   int *csr_rowoffsets = (int *)malloc(sizeof(double) * (N + 1));
   int *csr_colindices = (int *)malloc(sizeof(double) * 5 * N);
@@ -727,60 +698,80 @@ void solve_system(int points_per_direction, const int max_its = 10000) {
   cudaMalloc(&cuda_csr_rowoffsets, sizeof(double) * (N + 1));
   cudaMalloc(&cuda_csr_colindices, sizeof(double) * 5 * N);
   cudaMalloc(&cuda_csr_values, sizeof(double) * 5 * N);
-
 	
 	
+	if (bm_sa){
+		double time = 0;
+		int repetitions = 7;
+
+		time = execution_wrapper(GRID_SIZE, BLOCK_SIZE, repetitions, false, 
+														 my_generate_system, 
+														 points_per_direction, points_per_direction, 
+														 cuda_csr_rowoffsets, cuda_csr_colindices,
+														 cuda_csr_values);
+		printf("%5.8e; ",time);
+
+		
+		time = execution_wrapper(GRID_SIZE, BLOCK_SIZE, repetitions, false, 
+														 generate_fdm_laplace, 
+														 points_per_direction, csr_rowoffsets, csr_colindices,
+														 csr_values);
+		printf("%5.8e\n",time);
+	}
 	
-  //
-  // fill CSR matrix with values
-  //
 	
 
-  //generate_fdm_laplace(points_per_direction, csr_rowoffsets, csr_colindices,
-  //                     csr_values);
-
-  my_generate_system(points_per_direction, points_per_direction, 
-										 csr_rowoffsets, csr_colindices,
-                     csr_values,
-										 cuda_csr_rowoffsets, cuda_csr_colindices,
-                     cuda_csr_values);
 
 
-	//
-  // Copy CUDA-arrays
-  //
+	// if not benchmark system assembly
+	if (!bm_sa){
+		
+		std::cout << "Solving Ax=b with " << N << " unknowns." << std::endl;
 
-  //cudaMemcpy(cuda_csr_rowoffsets, csr_rowoffsets, sizeof(double) * (N + 1), cudaMemcpyHostToDevice);
-  //cudaMemcpy(cuda_csr_colindices, csr_colindices, sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
-  //cudaMemcpy(cuda_csr_values,     csr_values,     sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
+		//
+		// fill CSR matrix with values
+		//
 
-
-
-  //
-  // Allocate solution vector and right hand side:
-  //
-  double *solution = (double *)malloc(sizeof(double) * N);
-  double *rhs = (double *)malloc(sizeof(double) * N);
-  std::fill(rhs, rhs + N, 1);
+		//generate_fdm_laplace(points_per_direction, csr_rowoffsets, csr_colindices,
+		//                    csr_values);
+		//cudaMemcpy(cuda_csr_rowoffsets, csr_rowoffsets, sizeof(double) * (N + 1), cudaMemcpyHostToDevice);
+		//cudaMemcpy(cuda_csr_colindices, csr_colindices, sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
+		//cudaMemcpy(cuda_csr_values,     csr_values,     sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
 
 
-  //
-  // Call Conjugate Gradient implementation with GPU arrays
-  //
-  conjugate_gradient_pipe(N, cuda_csr_rowoffsets, cuda_csr_colindices, cuda_csr_values, rhs, solution, max_its);
+		my_generate_system(points_per_direction, points_per_direction, 
+											 cuda_csr_rowoffsets, cuda_csr_colindices,
+											 cuda_csr_values);
+		cudaMemcpy(csr_rowoffsets, cuda_csr_rowoffsets, sizeof(double) * (N + 1), cudaMemcpyDeviceToHost);
+		cudaMemcpy(csr_colindices, cuda_csr_colindices, sizeof(double) * 5 * N,   cudaMemcpyDeviceToHost);
+		cudaMemcpy(csr_values, cuda_csr_values, sizeof(double) * 5 * N,   cudaMemcpyDeviceToHost);
 
-  //
-  // Check for convergence:
-  //
-  double residual_norm = relative_residual(N, csr_rowoffsets, csr_colindices, csr_values, rhs, solution);
-  std::cout << "Relative residual norm: " << residual_norm
-            << " (should be smaller than 1e-6)" << std::endl;
+		//
+		// Allocate solution vector and right hand side:
+		//
+		double *solution = (double *)malloc(sizeof(double) * N);
+		double *rhs = (double *)malloc(sizeof(double) * N);
+		std::fill(rhs, rhs + N, 1);
+		//
+		// Call Conjugate Gradient implementation
+		//
+		conjugate_gradient_pipe(N, cuda_csr_rowoffsets, cuda_csr_colindices, cuda_csr_values, rhs, solution, max_its);
+
+		//
+		// Check for convergence:
+		//
+		
+		double residual_norm = relative_residual(N, csr_rowoffsets, csr_colindices, csr_values, rhs, solution);
+		std::cout << "Relative residual norm: " << residual_norm
+							<< " (should be smaller than 1e-6)" << std::endl;		
+
+		free(solution);
+		free(rhs);
+	}
 
   cudaFree(cuda_csr_rowoffsets);
   cudaFree(cuda_csr_colindices);
   cudaFree(cuda_csr_values);
-  free(solution);
-  free(rhs);
   free(csr_rowoffsets);
   free(csr_colindices);
   free(csr_values);
@@ -795,8 +786,21 @@ int main() {
 	
 	int pgrid = 100;
 	int maxits = 10000;
-	
-	solve_system(pgrid, maxits);
+	bool bm_sa = true;
+
+	std::vector<int> pgrids = {30, 60, 120, 240, 480, 960};
+	//std::vector<int> pgrids = {30, 60, 120, 240, 480, 960, 1920};
+
+	if (bm_sa){
+		printf("benchmarking system assembly\n");
+		printf("N; time device SA in s; time host SA in s\n");		
+	}
+
+	for (int i = 0; i < pgrids.size(); ++i){
+		if (bm_sa)
+				printf("%i; ", pgrids[i]*pgrids[i]);
+		solve_system(pgrids[i], maxits, bm_sa);	
+	}
 
   return EXIT_SUCCESS;
 }
