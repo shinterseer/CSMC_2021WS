@@ -13,35 +13,9 @@
 // ________________________________________________________________________
 
 
-/*
-__global__ void assembleA(int *csr_rowoffsets, int N, int M, double *csr_values, int* csr_colindices) {
-	
-	
-	
-	for (int row = blockDim.x * blockIdx.x + threadIdx.x;	
- 			 row < N*M;
-			 row += gridDim.x * blockDim.x) {
-				 
-			int i = row / N;
-			int j = row % N;
-			int this_row_offset = row_offsets[row];
-			int index = i * N + j;
-			col_indices[this_row_offset] = index;
-			values[this_row_offset] = 4;
-			this_row_offset += 1;
-			if (i > 0) //{  similarly with correct index and value -1	 }
-			if (j > 0) //{  similarly  }
-			if (i < N-1) //{  similarly  }
-			if (j < M-1) //{  similarly  }
-	}
-}
-*/
-
-
 void assembleA(int *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
 //void assembleA(double *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
 	
-		
 	for (int row = 0;	
  			 row < N*M;
 			 ++row) {
@@ -52,34 +26,38 @@ void assembleA(int *csr_rowoffsets, double *csr_values, int* csr_colindices, int
 
 			int index = i * M + j;
 
+
+			// bottom side (S)
+			if (i > 0){
+				csr_colindices[this_row_offset] = index - M;
+				csr_values[this_row_offset] = -1;				
+				this_row_offset += 1;
+			};
+
+			// left side (W)
+			if (j > 0) {
+				csr_colindices[this_row_offset] = index - 1;
+				csr_values[this_row_offset] = -1;
+				this_row_offset += 1;
+			}
+
 			// diagonal element (C)
 			csr_colindices[this_row_offset] = index;
 			csr_values[this_row_offset] = 4;
-
 			this_row_offset += 1;
 			
-			// left side (W)
-			if (i > 0) {
-				csr_colindices[this_row_offset] = index - 1;
-				csr_values[this_row_offset] = -1;
-			}
-
 			// right side (E)
-			if (i < N-1){
+			if (j < M-1){
 				csr_colindices[this_row_offset] = index + 1;
 				csr_values[this_row_offset] = -1;
+				this_row_offset += 1;
 			}
 
-			// bottom side (S)
-			if (j > 0){
-				csr_colindices[this_row_offset] = index - M;
-				csr_values[this_row_offset] = -1;				
-			};
-
 			// top side (N)
-			if (j < M-1){
+			if (i < M-1){
 				csr_colindices[this_row_offset] = index + M;
 				csr_values[this_row_offset] = -1;				
+				this_row_offset += 1;
 			}
 			
 	}
