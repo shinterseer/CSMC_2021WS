@@ -339,68 +339,6 @@ void assembleA(int *csr_rowoffsets, double *csr_values, int* csr_colindices, int
 	}
 }
 
-__global__
-void device_assembleA(int* num_entries, int *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
-//void assembleA(double *csr_rowoffsets, double *csr_values, int* csr_colindices, int N, int M) {
-
-	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-	int num_threads = blockDim.x * gridDim.x;
-	
-	// complete the constructon of csr_rowoffsets
-	if (global_thread_idx == 0)
-		csr_rowoffsets[N*M] = csr_rowoffsets[N*M - 1] + num_entries[N*M - 1];
-	
-	
-	for (int row = global_thread_idx;	
- 			 row < N*M;
-			 row += num_threads) {
-	//for (int row = 0;	
- 	//		 row < N*M;
-	//		 row += 1) {
-				 
-			int i = row / M;
-			int j = row % M;
-			int this_row_offset = csr_rowoffsets[row];
-
-			int index = i * M + j;
-
-
-			// bottom side (S)
-			if (i > 0){
-				csr_colindices[this_row_offset] = index - M;
-				csr_values[this_row_offset] = -1;				
-				this_row_offset += 1;
-			};
-
-			// left side (W)
-			if (j > 0) {
-				csr_colindices[this_row_offset] = index - 1;
-				csr_values[this_row_offset] = -1;
-				this_row_offset += 1;
-			}
-
-			// diagonal element (C)
-			csr_colindices[this_row_offset] = index;
-			csr_values[this_row_offset] = 4;
-			this_row_offset += 1;
-			
-			// right side (E)
-			if (j < M-1){
-				csr_colindices[this_row_offset] = index + 1;
-				csr_values[this_row_offset] = -1;
-				this_row_offset += 1;
-			}
-
-			// top side (N)
-			if (i < M-1){
-				csr_colindices[this_row_offset] = index + M;
-				csr_values[this_row_offset] = -1;				
-				this_row_offset += 1;
-			}			
-	}
-}
-
-
 
 //__global__
 void num_nonzero_entries(int N, int M, int *output){
@@ -432,45 +370,6 @@ void num_nonzero_entries(int N, int M, int *output){
 	}
 }
 
-
-__global__
-void device_num_nonzero_entries(int N, int M, int *output){
-	// inidices and dimensions of physical grid: 
-	// i ... row idx, j ... col idx
-	// N ... row dim, M ... col dim
-	// adressing: grid(i,j)
-
-	// system matrix A is of dimensions N*M x N*M
-	// row (i*M + j) represents the gridpoint grid[i,j]
-	int global_thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-	int num_threads = blockDim.x * gridDim.x;
-	
-	for (size_t i = global_thread_idx; i < N; i += num_threads){
-		for (size_t j = 0; j < M; j++){			
-	//for (size_t i = 0; i < N; i += 1){
-	//	for (size_t j = 0; j < M; j++){			
-			// how many nonzero entries does row i*M + j have
-			output[i*M + j] = 0;
-			
-			// diagonal element (C)
-			output[i*M + j]++;
-			// left side (W)
-			if (i > 0) output[i*M + j]++;
-			// right side (E)
-			if (i < N-1) output[i*M + j]++;
-			// bottom side (S)
-			if (j > 0) output[i*M + j]++;
-			// top side (N)
-			if (j < M-1) output[i*M + j]++;
-		}		
-	}
-}
-
-
-
-
-// ___________________________ Prefix Sum _________________________________
-// ________________________________________________________________________
 
 __global__ void scan_kernel_1(int const *X,
                               int *Y,
@@ -658,9 +557,7 @@ double execution_wrapper(int grid_size,
 
 
 void my_generate_system(int N, int M, int *csr_rowoffsets, int *csr_colindices,
-                        double *csr_values,
-												int *device_csr_rowoffsets, int *device_csr_colindices,
-                        double *device_csr_values)
+                        double *csr_values)
 {
 		//int N = 100;
 		//int M = 100;
@@ -671,31 +568,24 @@ void my_generate_system(int N, int M, int *csr_rowoffsets, int *csr_colindices,
 		int* device_num_entries;
 		cudaMalloc(&device_num_entries, sizeof(int) * N*M);
 		
-		//int* device_csr_rowoffsets;
-		//cudaMalloc(&device_csr_rowoffsets, sizeof(int) * N*M + 1);	
+		int* device_csr_rowoffsets;
+		cudaMalloc(&device_csr_rowoffsets, sizeof(int) * N*M + 1);	
 
 		// get number of nonzero entries per row
-		//num_nonzero_entries(N, M, num_entries);
-		//cudaMemcpy(device_num_entries, num_entries, sizeof(int) * N*M, cudaMemcpyHostToDevice);
-
-		device_num_nonzero_entries<<<256,256>>>(N, M, device_num_entries);
-		cudaDeviceSynchronize();
-		//cudaMemcpy(num_entries, device_num_entries, sizeof(int) * N*M, cudaMemcpyDeviceToHost);
+		num_nonzero_entries(N, M, num_entries);
+		cudaMemcpy(device_num_entries, num_entries, sizeof(int) * N*M, cudaMemcpyHostToDevice);
 		
 		// get row offsets for CSR as exclusive prefix sum of num_entries	
 		exclusive_scan(device_num_entries, device_csr_rowoffsets, N*M);
-		
-		
-		//cudaMemcpy(csr_rowoffsets, device_csr_rowoffsets, sizeof(int) * N*M, cudaMemcpyDeviceToHost);	
-		//csr_rowoffsets[N*M] = csr_rowoffsets[N*M - 1] + num_entries[N*M - 1];
-		//cudaMemcpy(device_csr_rowoffsets, csr_rowoffsets, sizeof(int) * (N*M+1), cudaMemcpyHostToDevice);	
+		cudaMemcpy(csr_rowoffsets, device_csr_rowoffsets, sizeof(int) * N*M, cudaMemcpyDeviceToHost);	
+
+		csr_rowoffsets[N*M] = csr_rowoffsets[N*M - 1] + num_entries[N*M - 1];
 			
-		//int num_values = csr_rowoffsets[N*M];
+		int num_values = csr_rowoffsets[N*M];
 		//int *csr_colindices = (int *)malloc(sizeof(int) * num_values);
 		//double *csr_values = (double *)malloc(sizeof(double) * num_values);
 
-		//assembleA(csr_rowoffsets, csr_values, csr_colindices, N, M);
-		device_assembleA<<<GRID_SIZE,BLOCK_SIZE>>>(device_num_entries, device_csr_rowoffsets, device_csr_values, device_csr_colindices, N, M);
+		assembleA(csr_rowoffsets, csr_values, csr_colindices, N, M);		
 
 }
 
@@ -720,40 +610,52 @@ void solve_system(int points_per_direction, const int max_its = 10000) {
 
   int *cuda_csr_rowoffsets, *cuda_csr_colindices;
   double *cuda_csr_values;
-	
-	//
-  // Allocate CUDA-arrays
-  //
-  cudaMalloc(&cuda_csr_rowoffsets, sizeof(double) * (N + 1));
-  cudaMalloc(&cuda_csr_colindices, sizeof(double) * 5 * N);
-  cudaMalloc(&cuda_csr_values, sizeof(double) * 5 * N);
-
-	
-	
-	
   //
   // fill CSR matrix with values
   //
 	
-
   //generate_fdm_laplace(points_per_direction, csr_rowoffsets, csr_colindices,
   //                     csr_values);
 
   my_generate_system(points_per_direction, points_per_direction, 
 										 csr_rowoffsets, csr_colindices,
-                     csr_values,
-										 cuda_csr_rowoffsets, cuda_csr_colindices,
-                     cuda_csr_values);
+                     csr_values);
+
+	/*
+	//-----------------------------------------------------------------------------
+	{
+		int N = 100;
+		int M = 100;
+		
+		int *num_entries = (int *)malloc(sizeof(int) * N*M);
+		//int *csr_rowoffsets = (int *)malloc(sizeof(int) * N*M + 1);
+		
+		int* device_num_entries;
+		cudaMalloc(&device_num_entries, sizeof(int) * N*M);
+		
+		int* device_csr_rowoffsets;
+		cudaMalloc(&device_csr_rowoffsets, sizeof(int) * N*M + 1);	
+
+		// get number of nonzero entries per row
+		num_nonzero_entries(N, M, num_entries);
+		cudaMemcpy(device_num_entries, num_entries, sizeof(int) * N*M, cudaMemcpyHostToDevice);
+		
+		// get row offsets for CSR as exclusive prefix sum of num_entries	
+		exclusive_scan(device_num_entries, device_csr_rowoffsets, N*M);
+		cudaMemcpy(csr_rowoffsets, device_csr_rowoffsets, sizeof(int) * N*M, cudaMemcpyDeviceToHost);	
+
+		csr_rowoffsets[N*M] = csr_rowoffsets[N*M - 1] + num_entries[N*M - 1];
+			
+		int num_values = csr_rowoffsets[N*M];
+		//int *csr_colindices = (int *)malloc(sizeof(int) * num_values);
+		//double *csr_values = (double *)malloc(sizeof(double) * num_values);
+
+		assembleA(csr_rowoffsets, csr_values, csr_colindices, N, M);		
+	}
 
 
-	//
-  // Copy CUDA-arrays
-  //
-
-  //cudaMemcpy(cuda_csr_rowoffsets, csr_rowoffsets, sizeof(double) * (N + 1), cudaMemcpyHostToDevice);
-  //cudaMemcpy(cuda_csr_colindices, csr_colindices, sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
-  //cudaMemcpy(cuda_csr_values,     csr_values,     sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
-
+	//-----------------------------------------------------------------------------
+	*/
 
 
   //
@@ -763,6 +665,15 @@ void solve_system(int points_per_direction, const int max_its = 10000) {
   double *rhs = (double *)malloc(sizeof(double) * N);
   std::fill(rhs, rhs + N, 1);
 
+  //
+  // Allocate CUDA-arrays //
+  //
+  cudaMalloc(&cuda_csr_rowoffsets, sizeof(double) * (N + 1));
+  cudaMalloc(&cuda_csr_colindices, sizeof(double) * 5 * N);
+  cudaMalloc(&cuda_csr_values, sizeof(double) * 5 * N);
+  cudaMemcpy(cuda_csr_rowoffsets, csr_rowoffsets, sizeof(double) * (N + 1), cudaMemcpyHostToDevice);
+  cudaMemcpy(cuda_csr_colindices, csr_colindices, sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
+  cudaMemcpy(cuda_csr_values,     csr_values,     sizeof(double) * 5 * N,   cudaMemcpyHostToDevice);
 
   //
   // Call Conjugate Gradient implementation with GPU arrays
@@ -793,10 +704,135 @@ void solve_system(int points_per_direction, const int max_its = 10000) {
 
 int main() {
 	
-	int pgrid = 100;
-	int maxits = 10000;
 	
-	solve_system(pgrid, maxits);
+	solve_system(100);
+	/*
+	
+	int N = 100;
+	int M = 100;
+	
+	bool sanity_check = false;
+	
+	
+	int *num_entries = (int *)malloc(sizeof(int) * N*M);
+	int *csr_rowoffsets = (int *)malloc(sizeof(int) * N*M + 1);
+	//int *csr_rowoffsets = (int *)malloc(sizeof(int) * N*M);
+	
+	int* device_num_entries;
+	cudaMalloc(&device_num_entries, sizeof(int) * N*M);
+	
+	int* device_csr_rowoffsets;
+	cudaMalloc(&device_csr_rowoffsets, sizeof(int) * N*M + 1);
+	
+
+	// get number of nonzero entries per row
+	num_nonzero_entries(N, M, num_entries);
+	cudaMemcpy(device_num_entries, num_entries, sizeof(int) * N*M, cudaMemcpyHostToDevice);
+	
+	// get row offsets for CSR as exclusive prefix sum of num_entries	
+	exclusive_scan(device_num_entries, device_csr_rowoffsets, N*M);
+	cudaMemcpy(csr_rowoffsets, device_csr_rowoffsets, sizeof(int) * N*M, cudaMemcpyDeviceToHost);	
+
+	csr_rowoffsets[N*M] = csr_rowoffsets[N*M - 1] + num_entries[N*M - 1];
+		
+	int num_values = csr_rowoffsets[N*M];
+	int *csr_colindices = (int *)malloc(sizeof(int) * num_values);
+	double *csr_values = (double *)malloc(sizeof(double) * num_values);
+
+	assembleA(csr_rowoffsets, csr_values, csr_colindices, N, M);
+	
+	if (N !=M){
+		std::cout << "N!=M aborting..." << std::endl;
+		return 1;
+	}
+	
+
+
+  generate_fdm_laplace(N, csr_rowoffsets, csr_colindices, csr_values);
+
+	
+	// move csr matrix to device
+
+	//int* device_csr_rowoffsets;
+	//cudaMalloc(&device_csr_rowoffsets, sizeof(int) * N*M + 1);
+	cudaMemcpy(device_csr_rowoffsets, csr_rowoffsets, sizeof(int) * (N*M + 1), cudaMemcpyHostToDevice);
+	int* device_csr_colindices;
+	cudaMalloc(&device_csr_colindices, sizeof(int) * num_values);
+	cudaMemcpy(device_csr_colindices, csr_colindices, sizeof(int) * num_values, cudaMemcpyHostToDevice);
+	double* device_csr_values;
+	cudaMalloc(&device_csr_values, sizeof(double) * num_values);
+	cudaMemcpy(device_csr_values, csr_values, sizeof(double) * num_values, cudaMemcpyHostToDevice);
+	
+
+	// allocate solution and rhs 
+  double *solution = (double *)malloc(sizeof(double) * N*M);
+  double *rhs = (double *)malloc(sizeof(double) * N*M);
+  std::fill(rhs, rhs + N*M, 1);
+	
+	
+
+	conjugate_gradient_pipe(N*M, // number of unknows
+                        device_csr_rowoffsets, device_csr_colindices,
+                        device_csr_values, rhs, solution,
+												10000);
+
+
+
+	cudaFree(device_csr_colindices);
+	cudaFree(device_csr_values);
+
+
+
+
+	if (sanity_check){
+		for(int i = 0; i < N*M; ++i){
+			//std::cout << num_entries[i] << ", ";
+		}
+		std::cout << std::endl;
+		for(int i = 0; i < N*M+1; ++i){
+			std::cout << csr_rowoffsets[i] << ", ";
+		}
+		std::cout << std::endl;
+	}
+
+
+	if (sanity_check){
+		std::cout << "csr_colindices: " << std::endl;
+		for(int i = 0; i < csr_rowoffsets[N*M]; ++i){
+			std::cout << csr_colindices[i] << ", ";
+		}
+		std::cout << std::endl;
+		std::cout << "csr_values: " << std::endl;
+		for(int i = 0; i < csr_rowoffsets[N*M]; ++i){
+			std::cout << csr_values[i] << ", ";
+		}
+		std::cout << std::endl;
+		
+		for(int i = 1; i < 10; ++i){
+			csr_values[i] = 0;
+		}
+		
+		generate_fdm_laplace(N, csr_rowoffsets, csr_colindices, csr_values);
+		
+		
+		std::cout << "correct values:  " << std::endl;
+		
+		std::cout << "csr_colindices: " << std::endl;
+		for(int i = 0; i < csr_rowoffsets[N*M]; ++i){
+			std::cout << csr_colindices[i] << ", ";
+		}
+		std::cout << std::endl;
+		std::cout << "csr_values: " << std::endl;
+		for(int i = 0; i < csr_rowoffsets[N*M]; ++i){
+			std::cout << csr_values[i] << ", ";
+		}
+		std::cout << std::endl;
+		
+			
+		
+	}
+*/
+
 
   return EXIT_SUCCESS;
 }
