@@ -349,9 +349,8 @@ void device_num_nonzero_entries(int N, int M, int *output){
 	int num_threads = blockDim.x * gridDim.x;
 	
 	for (size_t i = global_thread_idx; i < N; i += num_threads){
-		for (size_t j = 0; j < M; j++){			
-	//for (size_t i = 0; i < N; i += 1){
-	//	for (size_t j = 0; j < M; j++){			
+		for (size_t j = 0; j < M; j++){	
+
 			// how many nonzero entries does row i*M + j have
 			output[i*M + j] = 0;
 			
@@ -677,7 +676,7 @@ void solve_system(int points_per_direction, const int max_its = 10000, bool bm_s
 
 
 
-// _________________________________ Main ________________________________
+// _________________________________ Main _________________________________
 // ________________________________________________________________________
 
 int main() {
@@ -688,8 +687,8 @@ int main() {
 	//std::vector<int> pgrids = {1920};
 	//std::vector<int> pgrids = {3840};
 
-	//std::vector<int> pgrids = {30, 60, 120};
-	std::vector<int> pgrids = {30, 60, 120, 240, 480, 960};
+	std::vector<int> pgrids = {30, 60, 120};
+	//std::vector<int> pgrids = {30, 60, 120, 240, 480, 960};
 	//std::vector<int> pgrids = {30, 60, 120, 240, 480, 960, 1920};
 
 	if (bm_sa){
