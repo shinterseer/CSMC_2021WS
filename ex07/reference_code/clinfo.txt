@@ -1,0 +1,239 @@
+Number of platforms                               2
+  Platform Name                                   Portable Computing Language
+  Platform Vendor                                 The pocl project
+  Platform Version                                OpenCL 1.2 pocl 1.4, None+Asserts, LLVM 9.0.1, RELOC, SLEEF, DISTRO, POCL_DEBUG
+  Platform Profile                                FULL_PROFILE
+  Platform Extensions                             cl_khr_icd
+  Platform Extensions function suffix             POCL
+
+  Platform Name                                   NVIDIA CUDA
+  Platform Vendor                                 NVIDIA Corporation
+  Platform Version                                OpenCL 3.0 CUDA 11.5.56
+  Platform Profile                                FULL_PROFILE
+  Platform Extensions                             cl_khr_global_int32_base_atomics cl_khr_global_int32_extended_atomics cl_khr_local_int32_base_atomics cl_khr_local_int32_extended_atomics cl_khr_fp64 cl_khr_3d_image_writes cl_khr_byte_addressable_store cl_khr_icd cl_khr_gl_sharing cl_nv_compiler_options cl_nv_device_attribute_query cl_nv_pragma_unroll cl_nv_copy_opts cl_nv_create_buffer cl_khr_int64_base_atomics cl_khr_int64_extended_atomics cl_khr_device_uuid cl_khr_pci_bus_info
+  Platform Host timer resolution                  0ns
+  Platform Extensions function suffix             NV
+
+  Platform Name                                   Portable Computing Language
+Number of devices                                 1
+  Device Name                                     pthread-Intel(R) Xeon(R) CPU E5-2637 v4 @ 3.50GHz
+  Device Vendor                                   GenuineIntel
+  Device Vendor ID                                0x6c636f70
+  Device Version                                  OpenCL 1.2 pocl HSTR: pthread-x86_64-pc-linux-gnu-broadwell
+  Driver Version                                  1.4
+  Device OpenCL C Version                         OpenCL C 1.2 pocl
+  Device Type                                     CPU
+  Device Profile                                  FULL_PROFILE
+  Device Available                                Yes
+  Compiler Available                              Yes
+  Linker Available                                Yes
+  Max compute units                               4
+  Max clock frequency                             3499MHz
+  Device Partition                                (core)
+    Max number of sub-devices                     4
+    Supported partition types                     equally, by counts
+    Supported affinity domains                    (n/a)
+  Max work item dimensions                        3
+  Max work item sizes                             4096x4096x4096
+  Max work group size                             4096
+  Preferred work group size multiple              8
+  Preferred / native vector sizes                 
+    char                                                16 / 16      
+    short                                               16 / 16      
+    int                                                  8 / 8       
+    long                                                 4 / 4       
+    half                                                 0 / 0        (n/a)
+    float                                                8 / 8       
+    double                                               4 / 4        (cl_khr_fp64)
+  Half-precision Floating-point support           (n/a)
+  Single-precision Floating-point support         (core)
+    Denormals                                     Yes
+    Infinity and NANs                             Yes
+    Round to nearest                              Yes
+    Round to zero                                 Yes
+    Round to infinity                             Yes
+    IEEE754-2008 fused multiply-add               Yes
+    Support is emulated in software               No
+    Correctly-rounded divide and sqrt operations  Yes
+  Double-precision Floating-point support         (cl_khr_fp64)
+    Denormals                                     Yes
+    Infinity and NANs                             Yes
+    Round to nearest                              Yes
+    Round to zero                                 Yes
+    Round to infinity                             Yes
+    IEEE754-2008 fused multiply-add               Yes
+    Support is emulated in software               No
+  Address bits                                    64, Little-Endian
+  Global memory size                              14628913152 (13.62GiB)
+  Error Correction support                        No
+  Max memory allocation                           4294967296 (4GiB)
+  Unified memory for Host and Device              Yes
+  Minimum alignment for any data type             128 bytes
+  Alignment of base address                       1024 bits (128 bytes)
+  Global Memory cache type                        Read/Write
+  Global Memory cache size                        4194304 (4MiB)
+  Global Memory cache line size                   64 bytes
+  Image support                                   Yes
+    Max number of samplers per kernel             16
+    Max size for 1D images from buffer            268435456 pixels
+    Max 1D or 2D image array size                 2048 images
+    Max 2D image size                             16384x16384 pixels
+    Max 3D image size                             2048x2048x2048 pixels
+    Max number of read image args                 128
+    Max number of write image args                128
+  Local memory type                               Global
+  Local memory size                               2097152 (2MiB)
+  Max number of constant args                     8
+  Max constant buffer size                        2097152 (2MiB)
+  Max size of kernel argument                     1024
+  Queue properties                                
+    Out-of-order execution                        Yes
+    Profiling                                     Yes
+  Prefer user sync for interop                    Yes
+  Profiling timer resolution                      1ns
+  Execution capabilities                          
+    Run OpenCL kernels                            Yes
+    Run native kernels                            Yes
+  printf() buffer size                            16777216 (16MiB)
+  Built-in kernels                                (n/a)
+  Device Extensions                               cl_khr_byte_addressable_store cl_khr_global_int32_base_atomics cl_khr_global_int32_extended_atomics cl_khr_local_int32_base_atomics cl_khr_local_int32_extended_atomics cl_khr_3d_image_writes cl_khr_fp64 cl_khr_int64_base_atomics cl_khr_int64_extended_atomics cl_khr_fp64
+
+  Platform Name                                   NVIDIA CUDA
+Number of devices                                 1
+  Device Name                                     NVIDIA GeForce GTX 1080 Ti
+  Device Vendor                                   NVIDIA Corporation
+  Device Vendor ID                                0x10de
+  Device Version                                  OpenCL 3.0 CUDA
+  Driver Version                                  495.29.05
+  Device OpenCL C Version                         OpenCL C 1.2 
+  Device Type                                     GPU
+  Device Topology (NV)                            PCI-E, 00:00.6
+  Device Profile                                  FULL_PROFILE
+  Device Available                                Yes
+  Compiler Available                              Yes
+  Linker Available                                Yes
+  Max compute units                               28
+  Max clock frequency                             1582MHz
+  Compute Capability (NV)                         6.1
+  Device Partition                                (core)
+    Max number of sub-devices                     1
+    Supported partition types                     None
+    Supported affinity domains                    (n/a)
+  Max work item dimensions                        3
+  Max work item sizes                             1024x1024x64
+  Max work group size                             1024
+  Preferred work group size multiple              32
+  Warp size (NV)                                  32
+  Max sub-groups per work group                   0
+  Preferred / native vector sizes                 
+    char                                                 1 / 1       
+    short                                                1 / 1       
+    int                                                  1 / 1       
+    long                                                 1 / 1       
+    half                                                 0 / 0        (n/a)
+    float                                                1 / 1       
+    double                                               1 / 1        (cl_khr_fp64)
+  Half-precision Floating-point support           (n/a)
+  Single-precision Floating-point support         (core)
+    Denormals                                     Yes
+    Infinity and NANs                             Yes
+    Round to nearest                              Yes
+    Round to zero                                 Yes
+    Round to infinity                             Yes
+    IEEE754-2008 fused multiply-add               Yes
+    Support is emulated in software               No
+    Correctly-rounded divide and sqrt operations  Yes
+  Double-precision Floating-point support         (cl_khr_fp64)
+    Denormals                                     Yes
+    Infinity and NANs                             Yes
+    Round to nearest                              Yes
+    Round to zero                                 Yes
+    Round to infinity                             Yes
+    IEEE754-2008 fused multiply-add               Yes
+    Support is emulated in software               No
+  Address bits                                    64, Little-Endian
+  Global memory size                              11721506816 (10.92GiB)
+  Error Correction support                        No
+  Max memory allocation                           2930376704 (2.729GiB)
+  Unified memory for Host and Device              No
+  Integrated memory (NV)                          No
+  Shared Virtual Memory (SVM) capabilities        (core)
+    Coarse-grained buffer sharing                 Yes
+    Fine-grained buffer sharing                   No
+    Fine-grained system sharing                   No
+    Atomics                                       No
+  Minimum alignment for any data type             128 bytes
+  Alignment of base address                       4096 bits (512 bytes)
+  Preferred alignment for atomics                 
+    SVM                                           0 bytes
+    Global                                        0 bytes
+    Local                                         0 bytes
+  Max size for global variable                    0
+  Preferred total size of global vars             0
+  Global Memory cache type                        Read/Write
+  Global Memory cache size                        1376256 (1.312MiB)
+  Global Memory cache line size                   128 bytes
+  Image support                                   Yes
+    Max number of samplers per kernel             32
+    Max size for 1D images from buffer            268435456 pixels
+    Max 1D or 2D image array size                 2048 images
+    Max 2D image size                             16384x32768 pixels
+    Max 3D image size                             16384x16384x16384 pixels
+    Max number of read image args                 256
+    Max number of write image args                16
+    Max number of read/write image args           0
+  Max number of pipe args                         0
+  Max active pipe reservations                    0
+  Max pipe packet size                            0
+  Local memory type                               Local
+  Local memory size                               49152 (48KiB)
+  Registers per block (NV)                        65536
+  Max number of constant args                     9
+  Max constant buffer size                        65536 (64KiB)
+  Max size of kernel argument                     4352 (4.25KiB)
+  Queue properties (on host)                      
+    Out-of-order execution                        Yes
+    Profiling                                     Yes
+  Queue properties (on device)                    
+    Out-of-order execution                        No
+    Profiling                                     No
+    Preferred size                                0
+    Max size                                      0
+  Max queues on device                            0
+  Max events on device                            0
+  Prefer user sync for interop                    No
+  Profiling timer resolution                      1000ns
+  Execution capabilities                          
+    Run OpenCL kernels                            Yes
+    Run native kernels                            No
+    Sub-group independent forward progress        No
+    Kernel execution timeout (NV)                 No
+  Concurrent copy and kernel execution (NV)       Yes
+    Number of async copy engines                  2
+    IL version                                    (n/a)
+  printf() buffer size                            1048576 (1024KiB)
+  Built-in kernels                                (n/a)
+  Device Extensions                               cl_khr_global_int32_base_atomics cl_khr_global_int32_extended_atomics cl_khr_local_int32_base_atomics cl_khr_local_int32_extended_atomics cl_khr_fp64 cl_khr_3d_image_writes cl_khr_byte_addressable_store cl_khr_icd cl_khr_gl_sharing cl_nv_compiler_options cl_nv_device_attribute_query cl_nv_pragma_unroll cl_nv_copy_opts cl_nv_create_buffer cl_khr_int64_base_atomics cl_khr_int64_extended_atomics cl_khr_device_uuid cl_khr_pci_bus_info
+
+
+NULL platform behavior
+  clGetPlatformInfo(NULL, CL_PLATFORM_NAME, ...)  No platform
+  clGetDeviceIDs(NULL, CL_DEVICE_TYPE_ALL, ...)   No platform
+  clCreateContext(NULL, ...) [default]            No platform
+  clCreateContext(NULL, ...) [other]              Success [POCL]
+  clCreateContextFromType(NULL, CL_DEVICE_TYPE_DEFAULT)  Success (1)
+    Platform Name                                 Portable Computing Language
+    Device Name                                   pthread-Intel(R) Xeon(R) CPU E5-2637 v4 @ 3.50GHz
+  clCreateContextFromType(NULL, CL_DEVICE_TYPE_CPU)  Success (1)
+    Platform Name                                 Portable Computing Language
+    Device Name                                   pthread-Intel(R) Xeon(R) CPU E5-2637 v4 @ 3.50GHz
+  clCreateContextFromType(NULL, CL_DEVICE_TYPE_GPU)  No devices found in platform
+  clCreateContextFromType(NULL, CL_DEVICE_TYPE_ACCELERATOR)  No devices found in platform
+  clCreateContextFromType(NULL, CL_DEVICE_TYPE_CUSTOM)  No devices found in platform
+  clCreateContextFromType(NULL, CL_DEVICE_TYPE_ALL)  Success (1)
+    Platform Name                                 Portable Computing Language
+    Device Name                                   pthread-Intel(R) Xeon(R) CPU E5-2637 v4 @ 3.50GHz
+	NOTE:	your OpenCL library only supports OpenCL 2.2,
+		but some installed platforms support OpenCL 3.0.
+		Programs using 3.0 features may crash
+		or behave unexpectedly
