@@ -70,7 +70,7 @@ int main()
   err = clGetDeviceInfo(my_device_id, CL_DEVICE_NAME, sizeof(char)*63, device_name, &device_name_len); OPENCL_ERR_CHECK(err);
   std::cout << "Using the following device: " << device_name << std::endl;
 
-/*
+
 
   //
   // Create context:
@@ -196,7 +196,7 @@ int main()
   std::cout << "# My first OpenCL application finished successfully!" << std::endl;
   std::cout << "#" << std::endl;
 	
-	*/
+	
 	
   return EXIT_SUCCESS;
 }
