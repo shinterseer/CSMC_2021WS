@@ -20,7 +20,7 @@
 // ________________________________________________________________________
 
 __global__
-void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, double *dotp){
+void gpu_dotp_atomic_warp(const double *x, const double *y, const size_t size, double *dotp){
 
 	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int thread_num = gridDim.x * blockDim.x;
@@ -45,7 +45,97 @@ void gpu_dotp_wshuffle(const double *x, const double *y, const size_t size, doub
 }
 
 
+__global__
+void gpu_dotp_shared(const double *gpu_x, const double *gpu_y, const size_t size, 
+										  double *gpu_results){
+	
+		
+	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
+	int thread_num = gridDim.x * blockDim.x;
 
+	__shared__ double shared_dotp[BLOCK_SIZE];
+		
+	// sum of entries
+	double thread_dotp = 0;
+
+	for (unsigned int i = thread_id_global; i < size; i += thread_num){
+		thread_dotp += gpu_x[i] * gpu_y[i];
+	}
+
+	shared_dotp[threadIdx.x] = thread_dotp;
+		
+	// now the reduction
+	for(int stride = blockDim.x/2; stride>0; stride/=2){
+		__syncthreads();
+		if (threadIdx.x < stride){
+			shared_dotp[threadIdx.x] += shared_dotp[threadIdx.x + stride];
+		}
+	}
+	
+	__syncthreads();
+	// thread 0 writes result
+	if (threadIdx.x == 0){
+		gpu_results[blockIdx.x] = shared_dotp[0];
+	}	
+}
+
+__global__
+void gpu_dotp_atomic_shared(const double *gpu_x, const double *gpu_y, const size_t size, 
+										  double *gpu_result){
+	
+	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
+	int thread_num = gridDim.x * blockDim.x;
+
+	__shared__ double shared_dotp[BLOCK_SIZE];
+		
+	// sum of entries
+	double thread_dotp = 0;
+
+	for (unsigned int i = thread_id_global; i < size; i += thread_num){
+		thread_dotp += gpu_x[i] * gpu_y[i];
+	}
+
+	shared_dotp[threadIdx.x] = thread_dotp;
+		
+	// now the reduction
+	for(int stride = blockDim.x/2; stride>0; stride/=2){
+		__syncthreads();
+		if (threadIdx.x < stride){
+			shared_dotp[threadIdx.x] += shared_dotp[threadIdx.x + stride];
+		}
+	}
+	
+	__syncthreads();
+	// thread 0 writes result
+	if (threadIdx.x == 0){
+		atomicAdd(gpu_result, shared_dotp[0]);
+	}	
+}
+
+
+
+
+
+__global__
+void gpu_final_add(double *gpu_block_results, double *gpu_result){
+	// we assume one single block 
+	// also ideally BLOCK_SIZE == GRID_SIZE (but not necessary)
+	__shared__ double shared[GRID_SIZE];
+
+	shared[threadIdx.x] = gpu_block_results[threadIdx.x];
+			
+	// now the reduction
+	for(int stride = blockDim.x/2; stride>0; stride/=2){
+		__syncthreads();
+		if (threadIdx.x < stride){
+			shared[threadIdx.x] += shared[threadIdx.x + stride];
+		}
+	}
+
+	if (threadIdx.x == 0){
+		*gpu_result = shared[0];
+	}	
+}
 
 
 // __________________________ Execution wrapper ___________________________
@@ -115,6 +205,14 @@ void print_vector(double *x, size_t size, std::string name = "[vector name]", in
 	std::cout << std::endl;
 }
 
+
+void cpu_final_add(double *host_block_results, double *host_result, size_t size = GRID_SIZE){
+	*host_result = 0;
+	for(size_t i = 0; i < size; i++)
+		*host_result += host_block_results[i];
+}
+
+
 // _________________________________ Main ________________________________
 // ________________________________________________________________________
 
@@ -129,24 +227,44 @@ int main() {
 	host_y = (double*)malloc(sizes[i]*sizeof(double));
 	cpu_init(host_x, sizes[i]);
 	cpu_init(host_y, sizes[i]);
-	print_vector(host_x,sizes[i],"host_x");
-	print_vector(host_y,sizes[i],"host_y");
+	cudaMalloc(&device_x, sizes[i]*sizeof(double)); 
+	cudaMalloc(&device_y, sizes[i]*sizeof(double)); 
+	cudaMemcpy(device_x, host_x, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_y, host_y, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
+	// print_vector(host_x,sizes[i],"host_x");
+	// print_vector(host_y,sizes[i],"host_y");
 	
+	// single number results and initializer zero
 	double *host_result, *device_result, *zero;
 	zero = (double*)malloc(sizeof(double));	
 	*zero = 0;
 	host_result = (double*)malloc(sizeof(double));	
 	cudaMalloc(&device_result, sizeof(double)); 
-	
-	cudaMalloc(&device_x, sizes[i]*sizeof(double)); 
-	cudaMalloc(&device_y, sizes[i]*sizeof(double)); 
-	cudaMemcpy(device_x, host_x, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(device_y, host_y, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
-
 	cudaMemcpy(device_result, zero, sizeof(double), cudaMemcpyHostToDevice);
-	gpu_dotp_wshuffle<<<1,12>>>(device_x, device_y, sizes[i], device_result);
 
+	// multi number results
+	double *host_block_results, *device_block_results;
+	host_block_results = (double*)malloc(GRID_SIZE*sizeof(double));
+	cudaMalloc(&device_block_results, GRID_SIZE*sizeof(double)); 
+
+
+	// no atomic add. final sum on cpu
+	// gpu_dotp_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, sizes[i], device_block_results);
+	// cudaMemcpy(host_block_results, device_block_results, GRID_SIZE*sizeof(double), cudaMemcpyDeviceToHost);
+	// cpu_final_add(host_block_results,host_result);
+
+	// no atomic add. final sum on gpu
+	// gpu_dotp_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, sizes[i], device_block_results);
+	// gpu_final_add<<<1,GRID_SIZE>>>(device_block_results,device_result);
+	// cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
+	
+	// atomic add per workgroup
+	gpu_dotp_atomic_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, sizes[i], device_result);
 	cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
+
+	// atomic add once per warp
+	// gpu_dotp_wshuffle<<<1,12>>>(device_x, device_y, sizes[i], device_result);
+	// cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
 
 	// std::setprecision(12);
 	// std::cout << "result: " << std::setw(20) << *host_result << std::endl;
@@ -170,6 +288,12 @@ int main() {
 	// cudaMalloc(&gpu_numzeros, sizeof(double));
 
 
+	free(host_x);
+	free(host_y);
+	free(host_result);
+	cudaFree(device_x);
+	cudaFree(device_y);
+	cudaFree(device_result);
 
 
   return EXIT_SUCCESS;
