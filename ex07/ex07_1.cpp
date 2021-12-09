@@ -9,7 +9,7 @@
 #include <map>
 #include <cmath>
 
-
+// #define CUSTOM_SIZE 1000
 #define GRID_SIZE 256
 #define BLOCK_SIZE 256
 #define ALL_MASK 0xffffffff
@@ -113,14 +113,12 @@ void gpu_dotp_atomic_shared(const double *gpu_x, const double *gpu_y, const size
 }
 
 
-
-
-
 __global__
 void gpu_final_add(double *gpu_block_results, double *gpu_result){
 	// we assume one single block 
 	// also ideally BLOCK_SIZE == GRID_SIZE (but not necessary)
 	__shared__ double shared[GRID_SIZE];
+	// __shared__ double shared[gridDim.x];
 
 	shared[threadIdx.x] = gpu_block_results[threadIdx.x];
 			
@@ -190,6 +188,50 @@ double execution_wrapper(int grid_size,
 
 
 
+// __________________________ Timed Programs ______________________________
+// ________________________________________________________________________
+
+void cpu_final_add(double *host_block_results, double *host_result, size_t size = GRID_SIZE){
+	*host_result = 0;
+	for(size_t i = 0; i < size; i++)
+		*host_result += host_block_results[i];
+}
+
+
+
+void final_sum_on_cpu(double *device_x, double *device_y, size_t size, 
+											double *device_block_results,	double *host_block_results, double *host_result){
+	
+	gpu_dotp_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, size, device_block_results);
+	cudaMemcpy(host_block_results, device_block_results, GRID_SIZE*sizeof(double), cudaMemcpyDeviceToHost);
+	cpu_final_add(host_block_results,host_result);
+	
+}
+
+
+
+void final_sum_on_gpu(double *device_x, double *device_y, size_t size, 
+											double *device_block_results, double *device_result, double *host_result){
+	
+	gpu_dotp_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, size, device_block_results);
+	gpu_final_add<<<1,GRID_SIZE>>>(device_block_results,device_result);
+	cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
+	
+}
+
+void atomic_add_per_workgroup(double *device_x, double *device_y, int size, double *device_result, double *host_result){
+	gpu_dotp_atomic_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, size, device_result);
+	cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);	
+}
+
+void atomic_add_per_warp(double *device_x, double *device_y, int size, double *device_result, double *host_result){
+	gpu_dotp_atomic_warp<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, size, device_result);
+	cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
+}
+
+// __________________________ Stuff _______________________________________
+// ________________________________________________________________________
+
 void cpu_init(double *vec, size_t size){	
 	for(size_t ii = 0; ii < size; ii++)
 			vec[ii] = double(ii);
@@ -205,97 +247,132 @@ void print_vector(double *x, size_t size, std::string name = "[vector name]", in
 	std::cout << std::endl;
 }
 
-
-void cpu_final_add(double *host_block_results, double *host_result, size_t size = GRID_SIZE){
-	*host_result = 0;
-	for(size_t i = 0; i < size; i++)
-		*host_result += host_block_results[i];
-}
-
-
 // _________________________________ Main ________________________________
 // ________________________________________________________________________
 
+
+
+
+
 int main() {
 
-	std::vector<size_t> sizes = {100};
-	int i = 0;
+	bool sanity_check = false;
+	int repetitions = 11;
+	std::vector<size_t> sizes = {size_t(1e3), size_t(3*1e3),
+															size_t(1e4), size_t(3*1e4),
+															size_t(1e5), size_t(3*1e5),
+															size_t(1e6), size_t(3*1e6),
+															size_t(1e7)};
+	// int i = 0;
 
-	// Allocate vectors on host and device, initialize on host and copy over to device
-	double *host_x, *host_y, *device_x, *device_y;
-	host_x = (double*)malloc(sizes[i]*sizeof(double));
-	host_y = (double*)malloc(sizes[i]*sizeof(double));
-	cpu_init(host_x, sizes[i]);
-	cpu_init(host_y, sizes[i]);
-	cudaMalloc(&device_x, sizes[i]*sizeof(double)); 
-	cudaMalloc(&device_y, sizes[i]*sizeof(double)); 
-	cudaMemcpy(device_x, host_x, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(device_y, host_y, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
-	// print_vector(host_x,sizes[i],"host_x");
-	// print_vector(host_y,sizes[i],"host_y");
+	// std::vector<size_t> sizes = {size_t(50)};
+	// std::vector<size_t> sizes = {size_t(CUSTOM_SIZE)};
+
 	
-	// single number results and initializer zero
-	double *host_result, *device_result, *zero;
-	zero = (double*)malloc(sizeof(double));	
-	*zero = 0;
-	host_result = (double*)malloc(sizeof(double));	
-	cudaMalloc(&device_result, sizeof(double)); 
-	cudaMemcpy(device_result, zero, sizeof(double), cudaMemcpyHostToDevice);
-
-	// multi number results
-	double *host_block_results, *device_block_results;
-	host_block_results = (double*)malloc(GRID_SIZE*sizeof(double));
-	cudaMalloc(&device_block_results, GRID_SIZE*sizeof(double)); 
-
-
-	// no atomic add. final sum on cpu
-	// gpu_dotp_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, sizes[i], device_block_results);
-	// cudaMemcpy(host_block_results, device_block_results, GRID_SIZE*sizeof(double), cudaMemcpyDeviceToHost);
-	// cpu_final_add(host_block_results,host_result);
-
-	// no atomic add. final sum on gpu
-	// gpu_dotp_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, sizes[i], device_block_results);
-	// gpu_final_add<<<1,GRID_SIZE>>>(device_block_results,device_result);
-	// cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
+	std::cout << "vector size; final_sum_on_cpu; final_sum_on_gpu; atomic_add_per_workgroup; atomic_add_per_warp";
+	std::cout << std::endl;
 	
-	// atomic add per workgroup
-	gpu_dotp_atomic_shared<<<GRID_SIZE,BLOCK_SIZE>>>(device_x, device_y, sizes[i], device_result);
-	cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
+	for(size_t i = 0; i < sizes.size(); ++i){
+		// Allocate vectors on host and device, initialize on host and copy over to device
+		double *host_x, *host_y, *device_x, *device_y;
+		host_x = (double*)malloc(sizes[i]*sizeof(double));
+		host_y = (double*)malloc(sizes[i]*sizeof(double));
+		cpu_init(host_x, sizes[i]);
+		cpu_init(host_y, sizes[i]);
+		cudaMalloc(&device_x, sizes[i]*sizeof(double)); 
+		cudaMalloc(&device_y, sizes[i]*sizeof(double)); 
+		cudaMemcpy(device_x, host_x, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
+		cudaMemcpy(device_y, host_y, sizes[i]*sizeof(double), cudaMemcpyHostToDevice);
+		// print_vector(host_x,sizes[i],"host_x");
+		// print_vector(host_y,sizes[i],"host_y");
+		
+		// single number results and initializer zero
+		double *host_result, *device_result, *zero;
+		zero = (double*)malloc(sizeof(double));	
+		*zero = 0;
+		host_result = (double*)malloc(sizeof(double));	
+		cudaMalloc(&device_result, sizeof(double)); 
+		cudaMemcpy(device_result, zero, sizeof(double), cudaMemcpyHostToDevice);
 
-	// atomic add once per warp
-	// gpu_dotp_wshuffle<<<1,12>>>(device_x, device_y, sizes[i], device_result);
-	// cudaMemcpy(host_result, device_result, sizeof(double), cudaMemcpyDeviceToHost);
+		// multi number results
+		double *host_block_results, *device_block_results;
+		host_block_results = (double*)malloc(GRID_SIZE*sizeof(double));
+		cudaMalloc(&device_block_results, GRID_SIZE*sizeof(double)); 
 
-	// std::setprecision(12);
-	// std::cout << "result: " << std::setw(20) << *host_result << std::endl;
-	// std::cout << "result: " << std::setprecision(12) << *host_result << std::endl;
+		double execution_time;
+		double sanity_results[4];
+		
+		std::cout << sizes[i] << "; ";
 
-	// std::cout << "result: " << std::setprecision(12) << std::setw(20) << *host_result << std::endl;
-	std::cout << std::setprecision(12) << std::setw(20) 
-	<< "result: " << *host_result << std::endl;
+		// no atomic add. final sum on cpu	
+		execution_time = execution_wrapper(GRID_SIZE,
+																			BLOCK_SIZE,
+																			repetitions,
+																			false,
+																			final_sum_on_cpu, 
+																			device_x, device_y, sizes[i], 
+																			device_block_results,	host_block_results, host_result);
+		
+		std::cout << execution_time << "; ";
+		sanity_results[0] = *host_result;
 
-	// initialize pointers for result
-	// double *result_sum, *result_abssum, *result_squaresum, *result_numzeros;
-	// double *gpu_sum, *gpu_abssum, *gpu_squaresum, *gpu_numzeros;
-	// result_sum = (double*)malloc(sizeof(double));
-	// result_abssum = (double*)malloc(sizeof(double));
-	// result_squaresum = (double*)malloc(sizeof(double));
-	// result_numzeros = (double*)malloc(sizeof(double));
+		// no atomic add. final sum on gpu
+		execution_time = execution_wrapper(GRID_SIZE,
+																			BLOCK_SIZE,
+																			repetitions,
+																			false,
+																			final_sum_on_gpu, 
+																			device_x, device_y, sizes[i], 
+																			device_block_results, device_result, host_result);
+		
+		std::cout << execution_time << "; ";
+		sanity_results[1] = *host_result;
+		
+		// atomic add per workgroup
+		execution_time = execution_wrapper(GRID_SIZE,
+																			BLOCK_SIZE,
+																			repetitions,
+																			false,
+																			atomic_add_per_workgroup, 
+																			device_x, device_y, sizes[i], 
+																			device_result, host_result);
+		
+		std::cout << execution_time << "; ";
+		sanity_results[2] = *host_result;
 
-	// cudaMalloc(&gpu_sum, sizeof(double));
-	// cudaMalloc(&gpu_abssum, sizeof(double));
-	// cudaMalloc(&gpu_squaresum, sizeof(double));
-	// cudaMalloc(&gpu_numzeros, sizeof(double));
+		// atomic add once per warp
+		execution_time = execution_wrapper(GRID_SIZE,
+																			BLOCK_SIZE,
+																			repetitions,
+																			false,
+																			atomic_add_per_warp, 
+																			device_x, device_y, sizes[i], 
+																			device_result, host_result);
+		
+		std::cout << execution_time << std::endl;
+		sanity_results[3] = *host_result;
+		
+		if (sanity_check){
+			std::cout << std::setprecision(2) 
+			<< sanity_results[0] << "; " << sanity_results[1] << "; " 
+			<< sanity_results[2] << "; " << sanity_results[3] 
+			<< std::endl;
+		}
 
+		free(host_x);
+		free(host_y);
+		free(host_result);
+		free(host_block_results);
+		free(zero);		
+		// free(sanity_results);
 
-	free(host_x);
-	free(host_y);
-	free(host_result);
-	cudaFree(device_x);
-	cudaFree(device_y);
-	cudaFree(device_result);
+		cudaFree(device_x);
+		cudaFree(device_y);
+		cudaFree(device_result);
+		cudaFree(device_block_results);
+	}
 
-
+	cudaDeviceReset();
   return EXIT_SUCCESS;
 }
 
