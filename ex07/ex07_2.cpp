@@ -25,34 +25,9 @@ typedef double       ScalarType;
 
 #include <numeric> // for std::accumulate
 
+#define BLOCK_SIZE 128
+#define GRID_SIZE 128
 
-// const char *my_opencl_program = ""
-// "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
-// ""
-// "__kernel void vec_add(__global double *x,\n"
-// "                      __global double *y,\n"
-// "                      unsigned int N\n)"
-// "{\n"
-// "  for (unsigned int i  = get_global_id(0);\n"
-// "                    i  < N;\n"
-// "                    i += get_global_size(0))\n"
-// "    x[i] += y[i];\n"
-// "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
-
-
-// const char *my_opencl_program = ""
-// "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
-// ""
-// "__kernel void vec_add(__global double *x,\n"
-// "                      __global double *y,\n"
-// "                      __global double *result,\n"
-// "                      unsigned int N\n)"
-// "{\n"
-// "  for (unsigned int i  = get_global_id(0);\n"
-// "                    i  < N;\n"
-// "                    i += get_global_size(0))\n"
-// "    result[i] = x[i] * y[i];\n"
-// "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
 
 const char *my_opencl_program = ""
 "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
@@ -62,23 +37,24 @@ const char *my_opencl_program = ""
 "                      __global double *result,\n"
 "                      unsigned int N\n)"
 "{\n"
+"	__local double shared_dotp[128];\n"
 "  double thread_dotp = 0;\n"
 "  for (unsigned int i  = get_global_id(0);\n"
 "                    i  < N;\n"
 "                    i += get_global_size(0))\n"
 "    thread_dotp += x[i] * y[i];\n"
-"		result[get_global_id(0)] = thread_dotp;\n"
+"	shared_dotp[get_local_id(0)] = thread_dotp;\n"
+"	// now the reduction\n"
+"	for(int stride = get_local_size(0)/2; stride>0; stride/=2){\n"
+"		barrier(CLK_GLOBAL_MEM_FENCE);\n"
+"		if (get_local_id(0) < stride){\n"
+"			shared_dotp[get_local_id(0)] += shared_dotp[get_local_id(0) + stride];\n"
+"		}\n"
+"	}\n"
+"	barrier(CLK_GLOBAL_MEM_FENCE);	\n"	
+"    if (get_local_id(0) == 0)\n"
+"		   result[get_group_id(0)] = shared_dotp[0];\n"
 "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
-
-
-
-
-// double cpu_sum(double *array, size_t size){
-	// double sum = 0;
-	// for(size_t i = 0; i < size; ++i)
-		// sum += array[i];
-	// return sum;
-// }
 
 
 int main()
@@ -172,11 +148,14 @@ int main()
   //
   // Set up buffers on host:
   //
-	size_t global_size = 128*128;	
+	size_t grid_size = GRID_SIZE;
+  size_t  local_size = BLOCK_SIZE;
+	size_t global_size = GRID_SIZE * BLOCK_SIZE;
+
   cl_uint vector_size = 128*1024;
   std::vector<ScalarType> x(vector_size, 2.0);
   std::vector<ScalarType> y(vector_size, 3.0);
-  std::vector<ScalarType> result(global_size, 0.0);
+  std::vector<ScalarType> result(local_size, 0.0);
 
   std::cout << std::endl;
   std::cout << "Vectors before kernel launch:" << std::endl;
@@ -189,13 +168,13 @@ int main()
   //
   cl_mem ocl_x = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(x[0]), &err); OPENCL_ERR_CHECK(err);
   cl_mem ocl_y = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(y[0]), &err); OPENCL_ERR_CHECK(err);
-  cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, global_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
+  cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, grid_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
 
 
   //
   /////////////////////////// Part 4: Run kernel ///////////////////////////////////
   //
-  size_t  local_size = 128;
+  // size_t  local_size = 128;
   // size_t global_size = 128*128;
 
   //
@@ -209,7 +188,7 @@ int main()
   //
   // Enqueue kernel in command queue:
   //
-  err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+  err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &local_size, &grid_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
   // wait for all operations in queue to finish:
   err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
