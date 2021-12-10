@@ -9,8 +9,9 @@
 #include <map>
 #include <cmath>
 
-// #define CUSTOM_SIZE 1000
-#define GRID_SIZE 256
+#define VECTOR_SIZE 10000000
+#define GRID_SIZE 39064
+// #define GRID_SIZE 256
 #define BLOCK_SIZE 256
 #define ALL_MASK 0xffffffff
 
@@ -117,7 +118,8 @@ __global__
 void gpu_final_add(double *gpu_block_results, double *gpu_result){
 	// we assume one single block 
 	// also ideally BLOCK_SIZE == GRID_SIZE (but not necessary)
-	__shared__ double shared[GRID_SIZE];
+	// __shared__ double shared[GRID_SIZE];
+	__shared__ double shared[BLOCK_SIZE];
 	// __shared__ double shared[gridDim.x];
 
 	shared[threadIdx.x] = gpu_block_results[threadIdx.x];
@@ -258,15 +260,14 @@ int main() {
 
 	bool sanity_check = false;
 	int repetitions = 11;
-	std::vector<size_t> sizes = {size_t(1e3), size_t(3*1e3),
-															size_t(1e4), size_t(3*1e4),
-															size_t(1e5), size_t(3*1e5),
-															size_t(1e6), size_t(3*1e6),
-															size_t(1e7)};
-	// int i = 0;
+	// std::vector<size_t> sizes = {size_t(1e3), size_t(3*1e3),
+															// size_t(1e4), size_t(3*1e4),
+															// size_t(1e5), size_t(3*1e5),
+															// size_t(1e6), size_t(3*1e6),
+															// size_t(1e7)};
 
 	// std::vector<size_t> sizes = {size_t(50)};
-	// std::vector<size_t> sizes = {size_t(CUSTOM_SIZE)};
+	std::vector<size_t> sizes = {size_t(VECTOR_SIZE)};
 
 	
 	std::cout << "vector size; final_sum_on_cpu; final_sum_on_gpu; atomic_add_per_workgroup; atomic_add_per_warp";
