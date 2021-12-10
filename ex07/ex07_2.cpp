@@ -24,6 +24,7 @@ typedef double       ScalarType;
 #include "timer.hpp"
 
 #include <numeric> // for std::accumulate
+#include <algorithm> // for std::sort
 
 #define BLOCK_SIZE 128
 #define GRID_SIZE 128
@@ -59,6 +60,10 @@ const char *my_opencl_program = ""
 
 int main()
 {
+	
+	bool compute_on_gpu = true;
+	bool sanity_check = false;
+	int repetitions = 10;
   cl_int err;
 
   //
@@ -73,7 +78,8 @@ int main()
   err = clGetPlatformIDs(42, platform_ids, &num_platforms); OPENCL_ERR_CHECK(err);
   std::cout << "# Platforms found: " << num_platforms << std::endl;
   cl_platform_id my_platform = platform_ids[0];
-
+	if (compute_on_gpu)
+		my_platform = platform_ids[1];
 
   //
   // Query devices:
@@ -152,16 +158,18 @@ int main()
   size_t  local_size = BLOCK_SIZE;
 	size_t global_size = GRID_SIZE * BLOCK_SIZE;
 
-  cl_uint vector_size = 128*1024;
+  cl_uint vector_size = 128*102400;
   std::vector<ScalarType> x(vector_size, 2.0);
   std::vector<ScalarType> y(vector_size, 3.0);
-  std::vector<ScalarType> result(local_size, 0.0);
+  std::vector<ScalarType> result(grid_size, 0.0);
 
-  std::cout << std::endl;
-  std::cout << "Vectors before kernel launch:" << std::endl;
-  std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-  std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-  std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
+	if (sanity_check){
+		std::cout << std::endl;
+		std::cout << "Vectors before kernel launch:" << std::endl;
+		std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
+		std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+		std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;		
+	}
 
   //
   // Now set up OpenCL buffers:
@@ -188,10 +196,18 @@ int main()
   //
   // Enqueue kernel in command queue:
   //
-  err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &local_size, &grid_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+	std::vector<double> execution_times;
+	for(int i = 0; i < repetitions; i++){
+		timer.reset();
+		err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
-  // wait for all operations in queue to finish:
-  err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
+		// wait for all operations in queue to finish:
+		err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
+		execution_times.push_back(timer.get());	
+	}
+	std::sort(execution_times.begin(), execution_times.end());
+	double median_time = execution_times[int(repetitions/2)];
+	std::cout << "median execution time: " << median_time << std::endl;
 
 
   //
@@ -201,12 +217,14 @@ int main()
   // err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
   err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
-  std::cout << std::endl;
-  std::cout << "Vectors after kernel execution:" << std::endl;
-  std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-  std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-  std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
-	std::cout << "dot product: " << std::accumulate(result.begin(), result.end(), 0) << std::endl;
+	if (sanity_check){
+		std::cout << std::endl;
+		std::cout << "Vectors after kernel execution:" << std::endl;
+		std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
+		std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+		std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
+		std::cout << "dot product: " << std::accumulate(result.begin(), result.end(), 0) << std::endl;		
+	}
 	
 
   //
