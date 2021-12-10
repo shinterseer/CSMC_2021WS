@@ -21,32 +21,6 @@
 // ________________________________________________________________________
 
 __global__
-void gpu_dotp_atomic_warp(const double *x, const double *y, const size_t size, double *dotp){
-
-	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
-	int thread_num = gridDim.x * blockDim.x;
-	double thread_dotp = 0;
-		
-	// dot product
-	for (unsigned int i = thread_id_global; i < size; i += thread_num){
-		thread_dotp += x[i] * y[i];
-	}
-	
-	// sumation stage1 (warp reduction)
-	for(int stride = warpSize/2; stride > 0; stride /= 2){
-		__syncwarp();
-		thread_dotp += __shfl_down_sync(ALL_MASK, thread_dotp, stride);			
-	}
-	__syncwarp();
-	
-	// sumation stage2 (atomicAdd)
-	if ((threadIdx.x % warpSize) == 0){
-		atomicAdd(dotp, thread_dotp);
-	}	
-}
-
-
-__global__
 void gpu_dotp_shared(const double *gpu_x, const double *gpu_y, const size_t size, 
 										  double *gpu_results){
 	
@@ -79,6 +53,35 @@ void gpu_dotp_shared(const double *gpu_x, const double *gpu_y, const size_t size
 		gpu_results[blockIdx.x] = shared_dotp[0];
 	}	
 }
+
+
+
+__global__
+void gpu_dotp_atomic_warp(const double *x, const double *y, const size_t size, double *dotp){
+
+	int thread_id_global = blockIdx.x*blockDim.x + threadIdx.x;
+	int thread_num = gridDim.x * blockDim.x;
+	double thread_dotp = 0;
+		
+	// dot product
+	for (unsigned int i = thread_id_global; i < size; i += thread_num){
+		thread_dotp += x[i] * y[i];
+	}
+	
+	// sumation stage1 (warp reduction)
+	for(int stride = warpSize/2; stride > 0; stride /= 2){
+		__syncwarp();
+		thread_dotp += __shfl_down_sync(ALL_MASK, thread_dotp, stride);			
+	}
+	__syncwarp();
+	
+	// sumation stage2 (atomicAdd)
+	if ((threadIdx.x % warpSize) == 0){
+		atomicAdd(dotp, thread_dotp);
+	}	
+}
+
+
 
 __global__
 void gpu_dotp_atomic_shared(const double *gpu_x, const double *gpu_y, const size_t size, 
@@ -117,9 +120,8 @@ void gpu_dotp_atomic_shared(const double *gpu_x, const double *gpu_y, const size
 __global__
 void gpu_final_add(double *gpu_block_results, double *gpu_result){
 	// we assume one single block 
-	// also ideally BLOCK_SIZE == GRID_SIZE (but not necessary)
-	// __shared__ double shared[GRID_SIZE];
-	__shared__ double shared[BLOCK_SIZE];
+	__shared__ double shared[GRID_SIZE];
+	// __shared__ double shared[BLOCK_SIZE];
 	// __shared__ double shared[gridDim.x];
 
 	shared[threadIdx.x] = gpu_block_results[threadIdx.x];

@@ -23,20 +23,33 @@ typedef double       ScalarType;
 #include "ocl-error.hpp"
 #include "timer.hpp"
 
+// const char *my_opencl_program = ""
+// "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
+// ""
+// "__kernel void vec_add(__global double *x,\n"
+// "                      __global double *y,\n"
+// "                      unsigned int N\n)"
+// "{\n"
+// "  for (unsigned int i  = get_global_id(0);\n"
+// "                    i  < N;\n"
+// "                    i += get_global_size(0))\n"
+// "    x[i] += y[i];\n"
+// "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
+
 
 const char *my_opencl_program = ""
 "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
 ""
 "__kernel void vec_add(__global double *x,\n"
 "                      __global double *y,\n"
+"                      __global double *result,\n"
 "                      unsigned int N\n)"
 "{\n"
 "  for (unsigned int i  = get_global_id(0);\n"
 "                    i  < N;\n"
 "                    i += get_global_size(0))\n"
-"    x[i] += y[i];\n"
+"    result[i] = x[i] * y[i];\n"
 "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
-
 
 
 int main()
@@ -56,6 +69,7 @@ int main()
   std::cout << "# Platforms found: " << num_platforms << std::endl;
   cl_platform_id my_platform = platform_ids[0];
 
+
   //
   // Query devices:
   //
@@ -69,8 +83,6 @@ int main()
   size_t device_name_len = 0;
   err = clGetDeviceInfo(my_device_id, CL_DEVICE_NAME, sizeof(char)*63, device_name, &device_name_len); OPENCL_ERR_CHECK(err);
   std::cout << "Using the following device: " << device_name << std::endl;
-
-
 
   //
   // Create context:
@@ -88,8 +100,6 @@ int main()
   //
   /////////////////////////// Part 2: Create a program and extract kernels ///////////////////////////////////
   //
-
-
 
   Timer timer;
   timer.reset();
@@ -134,19 +144,22 @@ int main()
   // Set up buffers on host:
   //
   cl_uint vector_size = 128*1024;
-  std::vector<ScalarType> x(vector_size, 1.0);
-  std::vector<ScalarType> y(vector_size, 2.0);
+  std::vector<ScalarType> x(vector_size, 2.0);
+  std::vector<ScalarType> y(vector_size, 3.0);
+  std::vector<ScalarType> result(vector_size, 0.0);
 
   std::cout << std::endl;
   std::cout << "Vectors before kernel launch:" << std::endl;
   std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
   std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+  std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
 
   //
   // Now set up OpenCL buffers:
   //
   cl_mem ocl_x = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(x[0]), &err); OPENCL_ERR_CHECK(err);
   cl_mem ocl_y = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(y[0]), &err); OPENCL_ERR_CHECK(err);
+  cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
 
 
   //
@@ -160,7 +173,8 @@ int main()
   //
   err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
   err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
-  err = clSetKernelArg(my_kernel, 2, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);
+  err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
+  err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);
 
   //
   // Enqueue kernel in command queue:
@@ -175,18 +189,21 @@ int main()
   /////////////////////////// Part 5: Get data from OpenCL buffer ///////////////////////////////////
   //
 
-  err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+  // err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+  err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
   std::cout << std::endl;
   std::cout << "Vectors after kernel execution:" << std::endl;
   std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
   std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+  std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
 
   //
   // cleanup
   //
   clReleaseMemObject(ocl_x);
   clReleaseMemObject(ocl_y);
+  clReleaseMemObject(ocl_result);
   clReleaseProgram(prog);
   clReleaseCommandQueue(my_queue);
   clReleaseContext(my_context);
@@ -195,9 +212,6 @@ int main()
   std::cout << "#" << std::endl;
   std::cout << "# My first OpenCL application finished successfully!" << std::endl;
   std::cout << "#" << std::endl;
-	
-	
-	
   return EXIT_SUCCESS;
 }
 
