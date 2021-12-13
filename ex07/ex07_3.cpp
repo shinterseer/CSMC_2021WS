@@ -82,7 +82,7 @@ const char *my_opencl_program = ""
 // "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
 
 
-int dostuff(){
+int dostuff(size_t size){
 	
 	size_t grid_size = GRID_SIZE;
   size_t local_size = BLOCK_SIZE;
@@ -91,16 +91,6 @@ int dostuff(){
 	bool compute_on_gpu = false;
 	bool sanity_check = false;
 	int repetitions = 10;
-
-	// std::vector<size_t> sizes = {size_t(1e3), size_t(3*1e3),
-															// size_t(1e4), size_t(3*1e4),
-															// size_t(1e5), size_t(3*1e5),
-															// size_t(1e6), size_t(3*1e6),
-															// size_t(1e7)};
-
-	std::vector<size_t> sizes = {size_t(1e3), size_t(3*1e3),
-															size_t(1e4), size_t(3*1e4)};
-
 
 
   //
@@ -114,7 +104,7 @@ int dostuff(){
   cl_uint num_platforms;
   cl_platform_id platform_ids[42];   //no more than 42 platforms supported...
   err = clGetPlatformIDs(42, platform_ids, &num_platforms); OPENCL_ERR_CHECK(err);
-  std::cout << "# Platforms found: " << num_platforms << std::endl;
+  // std::cout << "# Platforms found: " << num_platforms << std::endl;
   cl_platform_id my_platform = platform_ids[0];
 	if (compute_on_gpu)
 		my_platform = platform_ids[1];
@@ -125,13 +115,13 @@ int dostuff(){
   cl_device_id device_ids[42];
   cl_uint num_devices;
   err = clGetDeviceIDs(my_platform, CL_DEVICE_TYPE_ALL, 42, device_ids, &num_devices); OPENCL_ERR_CHECK(err);
-  std::cout << "# Devices found: " << num_devices << std::endl;
+  // std::cout << "# Devices found: " << num_devices << std::endl;
   cl_device_id my_device_id = device_ids[0];
 
   char device_name[64];
   size_t device_name_len = 0;
   err = clGetDeviceInfo(my_device_id, CL_DEVICE_NAME, sizeof(char)*63, device_name, &device_name_len); OPENCL_ERR_CHECK(err);
-  std::cout << "Using the following device: " << device_name << std::endl;
+  // std::cout << "Using the following device: " << device_name << std::endl;
 
   //
   // Create context:
@@ -151,7 +141,7 @@ int dostuff(){
   //
 
   Timer timer;
-  timer.reset();
+  // timer.reset();
 
   //
   // Build the program:
@@ -181,119 +171,99 @@ int dostuff(){
   // Extract the only kernel in the program:
   //
   cl_kernel my_kernel = clCreateKernel(prog, "vec_add", &err); OPENCL_ERR_CHECK(err);
+  // std::cout << "Time to compile and create kernel: " << timer.get() << std::endl;
 
-  std::cout << "Time to compile and create kernel: " << timer.get() << std::endl;
-
-
-
-	std::cout << "vector size; execution time" << std::endl;
-
-	for(size_t j = 0; j < sizes.size(); ++j){
 		
 		
-		//
-		/////////////////////////// Part 3: Create memory buffers ///////////////////////////////////
-		//
+	//
+	/////////////////////////// Part 3: Create memory buffers ///////////////////////////////////
+	//
 
-		//
-		// Set up buffers on host:
-		//
-			
-			
-		// cl_uint vector_size = 128*102400;
-		cl_uint vector_size = sizes[j];
-		std::vector<ScalarType> x(vector_size, 2.0);
-		std::vector<ScalarType> y(vector_size, 3.0);
-		std::vector<ScalarType> result(grid_size, 0.0);
-
-		if (sanity_check){
-			std::cout << std::endl;
-			std::cout << "Vectors before kernel launch:" << std::endl;
-			std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-			std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-			std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;		
-		}
-
-		//
-		// Now set up OpenCL buffers:
-		//
-		cl_mem ocl_x = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(x[0]), &err); OPENCL_ERR_CHECK(err);
-		cl_mem ocl_y = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(y[0]), &err); OPENCL_ERR_CHECK(err);
-		cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, grid_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
-
-
-		//
-		/////////////////////////// Part 4: Run kernel ///////////////////////////////////
-		//
-		// size_t  local_size = 128;
-		// size_t global_size = 128*128;
-
-		//
-		// Set kernel arguments:
-		//
-		err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);
-
-		//
-		// Enqueue kernel in command queue:
-		//
-		std::vector<double> execution_times;
-		for(int i = 0; i < repetitions; i++){
-			timer.reset();
-			err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-
-			// wait for all operations in queue to finish:
-			err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
-			ScalarType rresuult = std::accumulate(result.begin(), result.end(), 0);
-			execution_times.push_back(timer.get());	
-		}
-		std::sort(execution_times.begin(), execution_times.end());
-		double median_time = execution_times[int(repetitions/2)];
-		std::cout << std::setprecision(8) << std::scientific << vector_size << "; " << median_time << std::endl;
-
-		//
-		/////////////////////////// Part 5: Get data from OpenCL buffer ///////////////////////////////////
-		//
-
-		// err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-		err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-
-		if (sanity_check){
-			std::cout << std::endl;
-			std::cout << "Vectors after kernel execution:" << std::endl;
-			std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-			std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-			std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
-			std::cout << "dot product: " << std::accumulate(result.begin(), result.end(), 0) << std::endl;		
-		}
+	//
+	// Set up buffers on host:
+	//
 		
-
-		//
-		// cleanup
-		//
-		clReleaseMemObject(ocl_x);
-		clReleaseMemObject(ocl_y);
-		clReleaseMemObject(ocl_result);
 		
+	// cl_uint vector_size = 128*102400;
+	cl_uint vector_size = size;
+	std::vector<ScalarType> x(vector_size, 2.0);
+	std::vector<ScalarType> y(vector_size, 3.0);
+	std::vector<ScalarType> result(grid_size, 0.0);
+
+	if (sanity_check){
+		std::cout << std::endl;
+		std::cout << "Vectors before kernel launch:" << std::endl;
+		std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
+		std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+		std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;		
 	}
 
+	//
+	// Now set up OpenCL buffers:
+	//
+	cl_mem ocl_x = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(x[0]), &err); OPENCL_ERR_CHECK(err);
+	cl_mem ocl_y = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(y[0]), &err); OPENCL_ERR_CHECK(err);
+	cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, grid_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
+
+
+	//
+	/////////////////////////// Part 4: Run kernel ///////////////////////////////////
+	//
+	// size_t  local_size = 128;
+	// size_t global_size = 128*128;
+
+	//
+	// Set kernel arguments:
+	//
+	err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
+	err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
+	err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
+	err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);
+
+	//
+	// Enqueue kernel in command queue:
+	//
+	std::vector<double> execution_times;
+	for(int i = 0; i < repetitions; i++){
+		timer.reset();
+		err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+
+		// wait for all operations in queue to finish:
+		err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
+		ScalarType rresuult = std::accumulate(result.begin(), result.end(), 0);
+		execution_times.push_back(timer.get());	
+	}
+	std::sort(execution_times.begin(), execution_times.end());
+	double median_time = execution_times[int(repetitions/2)];
+	std::cout << std::setprecision(8) << std::scientific << vector_size << "; " << median_time << std::endl;
+
+	//
+	/////////////////////////// Part 5: Get data from OpenCL buffer ///////////////////////////////////
+	//
+
+	// err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+	err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+
+	if (sanity_check){
+		std::cout << std::endl;
+		std::cout << "Vectors after kernel execution:" << std::endl;
+		std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
+		std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+		std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
+		std::cout << "dot product: " << std::accumulate(result.begin(), result.end(), 0) << std::endl;		
+	}
 	
-	
-	
+
+	//
+	// cleanup
+	//
+	clReleaseMemObject(ocl_x);
+	clReleaseMemObject(ocl_y);
+	clReleaseMemObject(ocl_result);
 	
   clReleaseProgram(prog);
   clReleaseCommandQueue(my_queue);
   clReleaseContext(my_context);
-
-  std::cout << std::endl;
-  std::cout << "#" << std::endl;
-  std::cout << "# My first OpenCL application finished successfully!" << std::endl;
-  std::cout << "#" << std::endl;
-	
-	
-	
 	
 }
 
@@ -316,8 +286,27 @@ int main()
   //
   generate_fdm_laplace(points_per_direction, csr_rowoffsets, csr_colindices, csr_values);
 
+  free(csr_rowoffsets);
+  free(csr_colindices);
+  free(csr_values);
+
+
+
+
+
+
+
 	std::cout << std::endl;
-	dostuff();
+	
+	
+	std::vector<size_t> sizes = {size_t(1e3), size_t(3*1e3),
+														size_t(1e4), size_t(3*1e4)};
+
+	std::cout << "vector size; execution time" << std::endl;
+
+	for(size_t i = 0; i < sizes.size(); ++i){
+		dostuff(sizes[i]);		
+	}
 
 	
 	
