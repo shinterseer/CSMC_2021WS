@@ -30,8 +30,8 @@ typedef double       ScalarType;
 
 
 
-#define BLOCK_SIZE 1
-#define GRID_SIZE 1
+#define BLOCK_SIZE 256
+#define GRID_SIZE 256
 
 
 // const char *my_opencl_program = ""
@@ -62,6 +62,26 @@ typedef double       ScalarType;
 // "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
 
 
+// const char *my_opencl_program = ""
+// "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
+// ""
+// "__kernel void vec_add( unsigned int N,\n"
+// "                       __global int *csr_rowoffsets,\n"
+// "                       __global int *csr_colindices,\n"
+// "                       __global double *csr_values,\n"
+// "                       __global double *vector,\n"
+// "                       __global double *result)\n"
+// "{\n"
+// "  for (size_t i=0; i<N; ++i) {\n"
+// "    double value = 0;\n"
+// "    for (size_t j=csr_rowoffsets[i]; j<csr_rowoffsets[i+1]; ++j)\n"
+// "      value += csr_values[j] * vector[csr_colindices[j]];\n"
+// "\n"
+// "    result[i] = value;\n"
+// "  }\n"
+// "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
+
+
 const char *my_opencl_program = ""
 "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
 ""
@@ -72,7 +92,7 @@ const char *my_opencl_program = ""
 "                       __global double *vector,\n"
 "                       __global double *result)\n"
 "{\n"
-"  for (size_t i=0; i<N; ++i) {\n"
+"  for (size_t i=get_global_id(0); i<N; i += get_global_size(0)) {\n"
 "    double value = 0;\n"
 "    for (size_t j=csr_rowoffsets[i]; j<csr_rowoffsets[i+1]; ++j)\n"
 "      value += csr_values[j] * vector[csr_colindices[j]];\n"
@@ -125,8 +145,8 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	size_t global_size = GRID_SIZE * BLOCK_SIZE;
 
 	bool compute_on_gpu = false;
-	bool sanity_check = true;
-	int repetitions = 1;
+	bool sanity_check = false;
+	int repetitions = 10;
 	bool dotp = false;
 
 
@@ -225,7 +245,6 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	std::vector<ScalarType> y(vector_size, 3.0);
 	std::vector<ScalarType> result(grid_size, 0.0);
 
-
 	std::vector<int> csr_rowoffsets(vector_size+1,0);
 	std::vector<int> csr_colindices(max_nonzeros_per_row*vector_size,0);
 	std::vector<double> csr_values(max_nonzeros_per_row*vector_size,0);
@@ -267,7 +286,8 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	//
 	// Enqueue kernel in command queue:
 	//
-	std::vector<double> execution_times;
+	std::vector<double> execution_times_gpu;
+	std::vector<double> execution_times_cpu;
 	for(int i = 0; i < repetitions; i++){
 		timer.reset();
 		
@@ -275,11 +295,20 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 
 		// wait for all operations in queue to finish:
 		err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
-		execution_times.push_back(timer.get());	
+		execution_times_gpu.push_back(timer.get());
+
+		// measure time for computation on cpu
+		timer.reset();		
+		csr_matvec_product(vector_size, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0], 
+											 &x_vector[0], &result_vector_sanity[0]);
+		execution_times_cpu.push_back(timer.get());		
 	}
-	std::sort(execution_times.begin(), execution_times.end());
-	double median_time = execution_times[int(repetitions/2)];
-	std::cout << std::setprecision(8) << std::scientific << vector_size << "; " << median_time << std::endl;
+	
+	std::sort(execution_times_gpu.begin(), execution_times_gpu.end());
+	double median_time_gpu = execution_times_gpu[int(repetitions/2)];
+	std::sort(execution_times_cpu.begin(), execution_times_cpu.end());
+	double median_time_cpu = execution_times_cpu[int(repetitions/2)];
+	std::cout << std::setprecision(5) << std::scientific << vector_size << "; " << median_time_gpu << "; " << median_time_cpu << std::endl;;
 
 	//
 	/////////////////////////// Part 5: Get data from OpenCL buffer ///////////////////////////////////
@@ -322,10 +351,15 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 
 int main()
 {
-
+	std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960, 1920, 3840};	
+	std::cout << "computing sparse matrix-vector product" << std::endl;
+	std::cout << "configuration: " << GRID_SIZE << " x " << BLOCK_SIZE << std::endl;
+	std::cout << "points per direction:" << std::endl;
+	for(size_t& size : points_per_direction)
+		std::cout << size << ", ";
+	std::cout << std::endl << std::endl;
 	
-	std::vector<size_t> points_per_direction = {30, 60, 120};	
-	std::cout << "vector size; execution time" << std::endl;
+	std::cout << "vector size; execution time OpenCL; execution time CPU" << std::endl;
 
 	for(size_t i = 0; i < points_per_direction.size(); ++i){
 		benchmark_matvec(points_per_direction[i],5,generate_fdm_laplace);
