@@ -100,6 +100,18 @@ void csr_matvec_product(size_t N,
 }
 
 
+// returns max(abs(v1 - v2))
+double compare_vectors(std::vector<double> v1, std::vector<double> v2)
+{
+	double max = 0;
+  for (size_t i=0; i < v1.size(); ++i)
+		if (std::fabs(v1[i] - v2[i]) > max)
+			max = std::fabs(v1[i] - v2[i]);
+	return max;
+}
+
+
+
 // ___________________________ the big Function ___________________________
 // ________________________________________________________________________
 
@@ -113,7 +125,7 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	size_t global_size = GRID_SIZE * BLOCK_SIZE;
 
 	bool compute_on_gpu = false;
-	bool sanity_check = false;
+	bool sanity_check = true;
 	int repetitions = 1;
 	bool dotp = false;
 
@@ -208,48 +220,28 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	// Set up buffers on host:
 	//
 
-	// cl_uint vector_size = 128*102400;
 	cl_uint vector_size = points_per_direction * points_per_direction;
 	std::vector<ScalarType> x(vector_size, 2.0);
 	std::vector<ScalarType> y(vector_size, 3.0);
 	std::vector<ScalarType> result(grid_size, 0.0);
 
 
-	// matvec block	
-	// int *csr_rowoffsets =    (int*)malloc(sizeof(double) * (vector_size+1));
-	// int *csr_colindices =    (int*)malloc(sizeof(double) * max_nonzeros_per_row * vector_size);
-	int *csr_rowoffsets =    (int*)malloc(sizeof(int) * (vector_size+1));
-	int *csr_colindices =    (int*)malloc(sizeof(int) * max_nonzeros_per_row * vector_size);
-	double *csr_values  = (double*)malloc(sizeof(double) * max_nonzeros_per_row * vector_size);
-	double *x_vector  = (double*)malloc(sizeof(double) * vector_size); std::fill(x_vector, x_vector + vector_size, 1);
-	double *result_vector  = (double*)malloc(sizeof(double) * vector_size); std::fill(result_vector, result_vector + vector_size, 0);
+	std::vector<int> csr_rowoffsets(vector_size+1,0);
+	std::vector<int> csr_colindices(max_nonzeros_per_row*vector_size,0);
+	std::vector<double> csr_values(max_nonzeros_per_row*vector_size,0);
+	std::vector<double> x_vector(vector_size,1);
+	std::vector<double> result_vector(vector_size,0);
+	std::vector<double> result_vector_sanity(vector_size,0);
+	
 
 	//
 	// fill CSR matrix with values
 	//
-	generate_fdm_laplace(points_per_direction, csr_rowoffsets, csr_colindices, csr_values);		
+	generate_fdm_laplace(points_per_direction, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0]);		
 		
-		
-
-	if (sanity_check){
-		// std::cout << std::endl;
-		// std::cout << "Vectors before kernel launch:" << std::endl;
-		// std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-		// std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-		// std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;		
-	}
-
 	//
 	// Now set up OpenCL buffers:
 	//
-
-
-	// cl_mem ocl_x = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(x[0]), &err); OPENCL_ERR_CHECK(err);
-	// cl_mem ocl_y = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(y[0]), &err); OPENCL_ERR_CHECK(err);
-	// cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, grid_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
-
-
-	// matvec block
 	cl_mem ocl_csr_rowoffsets = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, (vector_size+1) * sizeof(int), &(csr_rowoffsets[0]), &err); OPENCL_ERR_CHECK(err);
 	cl_mem ocl_csr_colindices = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, max_nonzeros_per_row * vector_size * sizeof(int), &(csr_colindices[0]), &err); OPENCL_ERR_CHECK(err);
 	cl_mem ocl_csr_values = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, max_nonzeros_per_row * vector_size * sizeof(double), &(csr_values[0]), &err); OPENCL_ERR_CHECK(err);
@@ -260,18 +252,10 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	//
 	/////////////////////////// Part 4: Run kernel ///////////////////////////////////
 	//
-	// size_t  local_size = 128;
-	// size_t global_size = 128*128;
 
 	//
 	// Set kernel arguments:
 	//
-	// err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
-	// err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
-	// err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
-	// err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
-
-	// matvec block
 	err = clSetKernelArg(my_kernel, 0, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
 	err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_csr_rowoffsets); OPENCL_ERR_CHECK(err);
 	err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_csr_colindices); OPENCL_ERR_CHECK(err);
@@ -287,14 +271,6 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	for(int i = 0; i < repetitions; i++){
 		timer.reset();
 		
-		// err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-
-		// wait for all operations in queue to finish:
-		// err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
-		// ScalarType rresuult = std::accumulate(result.begin(), result.end(), 0);
-		// execution_times.push_back(timer.get());	
-		
-		
 		err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
 		// wait for all operations in queue to finish:
@@ -309,41 +285,30 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	/////////////////////////// Part 5: Get data from OpenCL buffer ///////////////////////////////////
 	//
 
-	// err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-	// err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-	// err = clEnqueueReadBuffer(my_queue, ocl_result_vector, CL_TRUE, 0, sizeof(double) * result_vector.size(), &(result_vector[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+	err = clEnqueueReadBuffer(my_queue, ocl_result_vector, CL_TRUE, 0, sizeof(double) * result_vector.size(), &(result_vector[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
-	if (sanity_check){
-		// std::cout << std::endl;
-		// std::cout << "Vectors after kernel execution:" << std::endl;
-		// std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-		// std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-		// std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
-		// std::cout << "dot product: " << std::accumulate(result.begin(), result.end(), 0) << std::endl;		
-	}
 	
 
-
+	if (sanity_check){
+		// calculate result on cpu and compare
+		csr_matvec_product(vector_size, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0], 
+											 &x_vector[0], &result_vector_sanity[0]);
+		std::cout << std::endl;
+		std::cout << "vector comparison (max(abs(result_gpu - result_cpu))):" << std::endl;
+		std::cout << compare_vectors(result_vector, result_vector_sanity) << std::endl;
+	}
 
 	//
 	// cleanup
 	//
 
-
-	// matvec block	
-	free(csr_rowoffsets);
-	free(csr_colindices);
-	free(csr_values);
-	
+	// no need to release host vectors because std::vector was used
 	clReleaseMemObject(ocl_csr_rowoffsets);
 	clReleaseMemObject(ocl_csr_colindices);
 	clReleaseMemObject(ocl_csr_values);
 	clReleaseMemObject(ocl_x_vector);
 	clReleaseMemObject(ocl_result_vector);
 
-	// clReleaseMemObject(ocl_x);
-	// clReleaseMemObject(ocl_y);
-	// clReleaseMemObject(ocl_result);
 	
   clReleaseProgram(prog);
   clReleaseCommandQueue(my_queue);
