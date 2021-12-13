@@ -82,7 +82,10 @@ const char *my_opencl_program = ""
 // "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
 
 
-int dostuff(size_t size){
+
+int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
+                      void (*generate_matrix)(size_t, int*, int*, double*)) // function pointer parameter
+{
 	
 	size_t grid_size = GRID_SIZE;
   size_t local_size = BLOCK_SIZE;
@@ -91,6 +94,7 @@ int dostuff(size_t size){
 	bool compute_on_gpu = false;
 	bool sanity_check = false;
 	int repetitions = 10;
+	bool dotp = true;
 
 
   //
@@ -182,13 +186,29 @@ int dostuff(size_t size){
 	//
 	// Set up buffers on host:
 	//
-		
-		
+
 	// cl_uint vector_size = 128*102400;
-	cl_uint vector_size = size;
+	cl_uint vector_size = points_per_direction * points_per_direction;
 	std::vector<ScalarType> x(vector_size, 2.0);
 	std::vector<ScalarType> y(vector_size, 3.0);
 	std::vector<ScalarType> result(grid_size, 0.0);
+
+
+	// matvec block	
+	// int *csr_rowoffsets =    (int*)malloc(sizeof(double) * (vector_size+1));
+	// int *csr_colindices =    (int*)malloc(sizeof(double) * max_nonzeros_per_row * vector_size);
+	int *csr_rowoffsets =    (int*)malloc(sizeof(int) * (vector_size+1));
+	int *csr_colindices =    (int*)malloc(sizeof(int) * max_nonzeros_per_row * vector_size);
+	double *csr_values  = (double*)malloc(sizeof(double) * max_nonzeros_per_row * vector_size);
+	double *x_vector  = (double*)malloc(sizeof(double) * vector_size);
+	double *result_vector  = (double*)malloc(sizeof(double) * vector_size);
+
+	//
+	// fill CSR matrix with values
+	//
+	generate_fdm_laplace(points_per_direction, csr_rowoffsets, csr_colindices, csr_values);		
+		
+		
 
 	if (sanity_check){
 		std::cout << std::endl;
@@ -206,6 +226,14 @@ int dostuff(size_t size){
 	cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, grid_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
 
 
+	// matvec block
+	cl_mem ocl_csr_rowoffsets = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, (vector_size+1) * sizeof(int), &(csr_rowoffsets[0]), &err); OPENCL_ERR_CHECK(err);
+	cl_mem ocl_csr_colindices = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, max_nonzeros_per_row * vector_size * sizeof(int), &(csr_colindices[0]), &err); OPENCL_ERR_CHECK(err);
+	cl_mem ocl_csr_values = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, max_nonzeros_per_row * vector_size * sizeof(double), &(csr_values[0]), &err); OPENCL_ERR_CHECK(err);
+	cl_mem ocl_x_vector = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(double), &(x_vector[0]), &err); OPENCL_ERR_CHECK(err);
+	cl_mem ocl_result_vector = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(double), &(result_vector[0]), &err); OPENCL_ERR_CHECK(err);
+
+
 	//
 	/////////////////////////// Part 4: Run kernel ///////////////////////////////////
 	//
@@ -215,10 +243,23 @@ int dostuff(size_t size){
 	//
 	// Set kernel arguments:
 	//
-	err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
-	err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
-	err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
-	err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);
+	if (dotp){
+		err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
+		err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
+		err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
+		err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
+	}
+
+	if (!dotp){
+		// matvec block
+		err = clSetKernelArg(my_kernel, 0, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
+		err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_csr_rowoffsets); OPENCL_ERR_CHECK(err);
+		err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_csr_colindices); OPENCL_ERR_CHECK(err);
+		err = clSetKernelArg(my_kernel, 3, sizeof(cl_mem),  (void*)&ocl_csr_values); OPENCL_ERR_CHECK(err);
+		err = clSetKernelArg(my_kernel, 4, sizeof(cl_mem),  (void*)&ocl_x_vector); OPENCL_ERR_CHECK(err);
+		err = clSetKernelArg(my_kernel, 5, sizeof(cl_mem),  (void*)&ocl_result_vector); OPENCL_ERR_CHECK(err);		
+	}
+
 
 	//
 	// Enqueue kernel in command queue:
@@ -254,6 +295,17 @@ int dostuff(size_t size){
 	}
 	
 
+	{ // matvec block
+	
+		free(csr_rowoffsets);
+		free(csr_colindices);
+		free(csr_values);
+		
+	}
+
+
+
+
 	//
 	// cleanup
 	//
@@ -264,6 +316,7 @@ int dostuff(size_t size){
   clReleaseProgram(prog);
   clReleaseCommandQueue(my_queue);
   clReleaseContext(my_context);
+  return EXIT_SUCCESS;
 	
 }
 
@@ -273,43 +326,13 @@ int dostuff(size_t size){
 int main()
 {
 
-
-	int points_per_direction = 5;
-	int N = points_per_direction * points_per_direction;
-	int max_nonzeros_per_row = 5;
-  int *csr_rowoffsets =    (int*)malloc(sizeof(double) * (N+1));
-  int *csr_colindices =    (int*)malloc(sizeof(double) * max_nonzeros_per_row * N);
-  double *csr_values  = (double*)malloc(sizeof(double) * max_nonzeros_per_row * N);
-
-  //
-  // fill CSR matrix with values
-  //
-  generate_fdm_laplace(points_per_direction, csr_rowoffsets, csr_colindices, csr_values);
-
-  free(csr_rowoffsets);
-  free(csr_colindices);
-  free(csr_values);
-
-
-
-
-
-
-
-	std::cout << std::endl;
 	
-	
-	std::vector<size_t> sizes = {size_t(1e3), size_t(3*1e3),
-														size_t(1e4), size_t(3*1e4)};
-
+	std::vector<size_t> points_per_direction = {30, 60, 120};	
 	std::cout << "vector size; execution time" << std::endl;
 
-	for(size_t i = 0; i < sizes.size(); ++i){
-		dostuff(sizes[i]);		
+	for(size_t i = 0; i < points_per_direction.size(); ++i){
+		benchmark_matvec(points_per_direction[i],5,generate_fdm_laplace);
 	}
-
-	
-	
 	
 	
   return EXIT_SUCCESS;
