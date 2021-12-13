@@ -65,7 +65,7 @@ int main()
   size_t local_size = BLOCK_SIZE;
 	size_t global_size = GRID_SIZE * BLOCK_SIZE;
 
-	bool compute_on_gpu = false;
+	bool compute_on_gpu = true;
 	bool sanity_check = false;
 	int repetitions = 10;
   cl_int err;
@@ -219,19 +219,14 @@ int main()
 
 			// wait for all operations in queue to finish:
 			err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
+		// Part 5: Get data from OpenCL buffer
+			err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 			ScalarType rresuult = std::accumulate(result.begin(), result.end(), 0);
 			execution_times.push_back(timer.get());	
 		}
 		std::sort(execution_times.begin(), execution_times.end());
 		double median_time = execution_times[int(repetitions/2)];
 		std::cout << std::setprecision(8) << std::scientific << vector_size << "; " << median_time << std::endl;
-
-		//
-		/////////////////////////// Part 5: Get data from OpenCL buffer ///////////////////////////////////
-		//
-
-		// err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-		err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
 		if (sanity_check){
 			std::cout << std::endl;

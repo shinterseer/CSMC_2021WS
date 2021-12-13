@@ -30,57 +30,78 @@ typedef double       ScalarType;
 
 
 
-#define BLOCK_SIZE 256
-#define GRID_SIZE 256
-
-
-const char *my_opencl_program = ""
-"#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
-""
-"__kernel void vec_add(__global double *x,\n"
-"                      __global double *y,\n"
-"                      __global double *result,\n"
-"                      unsigned int N\n)"
-"{\n"
-"	__local double shared_dotp[256];\n"
-"  double thread_dotp = 0;\n"
-"  for (unsigned int i  = get_global_id(0);\n"
-"                    i  < N;\n"
-"                    i += get_global_size(0))\n"
-"    thread_dotp += x[i] * y[i];\n"
-"	shared_dotp[get_local_id(0)] = thread_dotp;\n"
-"	// now the reduction\n"
-"	for(int stride = get_local_size(0)/2; stride>0; stride/=2){\n"
-"		barrier(CLK_GLOBAL_MEM_FENCE);\n"
-"		if (get_local_id(0) < stride){\n"
-"			shared_dotp[get_local_id(0)] += shared_dotp[get_local_id(0) + stride];\n"
-"		}\n"
-"	}\n"
-"	barrier(CLK_GLOBAL_MEM_FENCE);	\n"	
-"    if (get_local_id(0) == 0)\n"
-"		   result[get_group_id(0)] = shared_dotp[0];\n"
-"}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
+#define BLOCK_SIZE 1
+#define GRID_SIZE 1
 
 
 // const char *my_opencl_program = ""
 // "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
 // ""
-// "__kernel void vec_add( unsigned int N,\n"
-// "                       __global int *row_offset,\n"
-// "                       __global int *col_indices,\n"
-// "                       __global double *values,\n"
-// "                       __global double *vector,\n"
-// "                       __global double *result)\n"
+// "__kernel void vec_add(__global double *x,\n"
+// "                      __global double *y,\n"
+// "                      __global double *result,\n"
+// "                      unsigned int N\n)"
 // "{\n"
-// "  for (size_t i=0; i<N; ++i) {\n"
-// "    double value = 0;\n"
-// "    for (size_t j=csr_rowoffsets[i]; j<csr_rowoffsets[i+1]; ++j)\n"
-// "      value += csr_values[j] * x[csr_colindices[j]];\n"
-// "\n"
-// "    y[i] = value;\n"
-// "  }\n"
+// "	__local double shared_dotp[256];\n"
+// "  double thread_dotp = 0;\n"
+// "  for (unsigned int i  = get_global_id(0);\n"
+// "                    i  < N;\n"
+// "                    i += get_global_size(0))\n"
+// "    thread_dotp += x[i] * y[i];\n"
+// "	shared_dotp[get_local_id(0)] = thread_dotp;\n"
+// "	// now the reduction\n"
+// "	for(int stride = get_local_size(0)/2; stride>0; stride/=2){\n"
+// "		barrier(CLK_GLOBAL_MEM_FENCE);\n"
+// "		if (get_local_id(0) < stride){\n"
+// "			shared_dotp[get_local_id(0)] += shared_dotp[get_local_id(0) + stride];\n"
+// "		}\n"
+// "	}\n"
+// "	barrier(CLK_GLOBAL_MEM_FENCE);	\n"	
+// "    if (get_local_id(0) == 0)\n"
+// "		   result[get_group_id(0)] = shared_dotp[0];\n"
 // "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
 
+
+const char *my_opencl_program = ""
+"#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
+""
+"__kernel void vec_add( unsigned int N,\n"
+"                       __global int *csr_rowoffsets,\n"
+"                       __global int *csr_colindices,\n"
+"                       __global double *csr_values,\n"
+"                       __global double *vector,\n"
+"                       __global double *result)\n"
+"{\n"
+"  for (size_t i=0; i<N; ++i) {\n"
+"    double value = 0;\n"
+"    for (size_t j=csr_rowoffsets[i]; j<csr_rowoffsets[i+1]; ++j)\n"
+"      value += csr_values[j] * vector[csr_colindices[j]];\n"
+"\n"
+"    result[i] = value;\n"
+"  }\n"
+"}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
+
+
+
+
+/** Computes y = A*x for a sparse matrix A in CSR format and vector x,y. CPU implementation.  */
+void csr_matvec_product(size_t N,
+                        int *csr_rowoffsets, int *csr_colindices, double *csr_values,
+                        double const *x, double *y)
+{
+  for (size_t i=0; i<N; ++i) {
+    double value = 0;
+    for (size_t j=csr_rowoffsets[i]; j<csr_rowoffsets[i+1]; ++j)
+      value += csr_values[j] * x[csr_colindices[j]];
+
+    y[i] = value;
+  }
+
+}
+
+
+// ___________________________ the big Function ___________________________
+// ________________________________________________________________________
 
 
 int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
@@ -93,8 +114,8 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 
 	bool compute_on_gpu = false;
 	bool sanity_check = false;
-	int repetitions = 10;
-	bool dotp = true;
+	int repetitions = 1;
+	bool dotp = false;
 
 
   //
@@ -200,8 +221,8 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	int *csr_rowoffsets =    (int*)malloc(sizeof(int) * (vector_size+1));
 	int *csr_colindices =    (int*)malloc(sizeof(int) * max_nonzeros_per_row * vector_size);
 	double *csr_values  = (double*)malloc(sizeof(double) * max_nonzeros_per_row * vector_size);
-	double *x_vector  = (double*)malloc(sizeof(double) * vector_size);
-	double *result_vector  = (double*)malloc(sizeof(double) * vector_size);
+	double *x_vector  = (double*)malloc(sizeof(double) * vector_size); std::fill(x_vector, x_vector + vector_size, 1);
+	double *result_vector  = (double*)malloc(sizeof(double) * vector_size); std::fill(result_vector, result_vector + vector_size, 0);
 
 	//
 	// fill CSR matrix with values
@@ -211,19 +232,21 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 		
 
 	if (sanity_check){
-		std::cout << std::endl;
-		std::cout << "Vectors before kernel launch:" << std::endl;
-		std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-		std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-		std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;		
+		// std::cout << std::endl;
+		// std::cout << "Vectors before kernel launch:" << std::endl;
+		// std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
+		// std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+		// std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;		
 	}
 
 	//
 	// Now set up OpenCL buffers:
 	//
-	cl_mem ocl_x = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(x[0]), &err); OPENCL_ERR_CHECK(err);
-	cl_mem ocl_y = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(y[0]), &err); OPENCL_ERR_CHECK(err);
-	cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, grid_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
+
+
+	// cl_mem ocl_x = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(x[0]), &err); OPENCL_ERR_CHECK(err);
+	// cl_mem ocl_y = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, vector_size * sizeof(ScalarType), &(y[0]), &err); OPENCL_ERR_CHECK(err);
+	// cl_mem ocl_result = clCreateBuffer(my_context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, grid_size * sizeof(ScalarType), &(result[0]), &err); OPENCL_ERR_CHECK(err);
 
 
 	// matvec block
@@ -243,22 +266,18 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	//
 	// Set kernel arguments:
 	//
-	if (dotp){
-		err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
-	}
+	// err = clSetKernelArg(my_kernel, 0, sizeof(cl_mem),  (void*)&ocl_x); OPENCL_ERR_CHECK(err);
+	// err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_y); OPENCL_ERR_CHECK(err);
+	// err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_result); OPENCL_ERR_CHECK(err);
+	// err = clSetKernelArg(my_kernel, 3, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
 
-	if (!dotp){
-		// matvec block
-		err = clSetKernelArg(my_kernel, 0, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
-		err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_csr_rowoffsets); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_csr_colindices); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 3, sizeof(cl_mem),  (void*)&ocl_csr_values); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 4, sizeof(cl_mem),  (void*)&ocl_x_vector); OPENCL_ERR_CHECK(err);
-		err = clSetKernelArg(my_kernel, 5, sizeof(cl_mem),  (void*)&ocl_result_vector); OPENCL_ERR_CHECK(err);		
-	}
+	// matvec block
+	err = clSetKernelArg(my_kernel, 0, sizeof(cl_uint), (void*)&vector_size); OPENCL_ERR_CHECK(err);		
+	err = clSetKernelArg(my_kernel, 1, sizeof(cl_mem),  (void*)&ocl_csr_rowoffsets); OPENCL_ERR_CHECK(err);
+	err = clSetKernelArg(my_kernel, 2, sizeof(cl_mem),  (void*)&ocl_csr_colindices); OPENCL_ERR_CHECK(err);
+	err = clSetKernelArg(my_kernel, 3, sizeof(cl_mem),  (void*)&ocl_csr_values); OPENCL_ERR_CHECK(err);
+	err = clSetKernelArg(my_kernel, 4, sizeof(cl_mem),  (void*)&ocl_x_vector); OPENCL_ERR_CHECK(err);
+	err = clSetKernelArg(my_kernel, 5, sizeof(cl_mem),  (void*)&ocl_result_vector); OPENCL_ERR_CHECK(err);		
 
 
 	//
@@ -267,11 +286,19 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	std::vector<double> execution_times;
 	for(int i = 0; i < repetitions; i++){
 		timer.reset();
+		
+		// err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+
+		// wait for all operations in queue to finish:
+		// err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
+		// ScalarType rresuult = std::accumulate(result.begin(), result.end(), 0);
+		// execution_times.push_back(timer.get());	
+		
+		
 		err = clEnqueueNDRangeKernel(my_queue, my_kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
 		// wait for all operations in queue to finish:
 		err = clFinish(my_queue); OPENCL_ERR_CHECK(err);
-		ScalarType rresuult = std::accumulate(result.begin(), result.end(), 0);
 		execution_times.push_back(timer.get());	
 	}
 	std::sort(execution_times.begin(), execution_times.end());
@@ -283,35 +310,40 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	//
 
 	// err = clEnqueueReadBuffer(my_queue, ocl_x, CL_TRUE, 0, sizeof(ScalarType) * x.size(), &(x[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
-	err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+	// err = clEnqueueReadBuffer(my_queue, ocl_result, CL_TRUE, 0, sizeof(ScalarType) * result.size(), &(result[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
+	// err = clEnqueueReadBuffer(my_queue, ocl_result_vector, CL_TRUE, 0, sizeof(double) * result_vector.size(), &(result_vector[0]), 0, NULL, NULL); OPENCL_ERR_CHECK(err);
 
 	if (sanity_check){
-		std::cout << std::endl;
-		std::cout << "Vectors after kernel execution:" << std::endl;
-		std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
-		std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
-		std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
-		std::cout << "dot product: " << std::accumulate(result.begin(), result.end(), 0) << std::endl;		
+		// std::cout << std::endl;
+		// std::cout << "Vectors after kernel execution:" << std::endl;
+		// std::cout << "x: " << x[0] << " " << x[1] << " " << x[2] << " ..." << std::endl;
+		// std::cout << "y: " << y[0] << " " << y[1] << " " << y[2] << " ..." << std::endl;
+		// std::cout << "result: " << result[0] << " " << result[1] << " " << result[2] << " ..." << std::endl;
+		// std::cout << "dot product: " << std::accumulate(result.begin(), result.end(), 0) << std::endl;		
 	}
 	
-
-	{ // matvec block
-	
-		free(csr_rowoffsets);
-		free(csr_colindices);
-		free(csr_values);
-		
-	}
-
 
 
 
 	//
 	// cleanup
 	//
-	clReleaseMemObject(ocl_x);
-	clReleaseMemObject(ocl_y);
-	clReleaseMemObject(ocl_result);
+
+
+	// matvec block	
+	free(csr_rowoffsets);
+	free(csr_colindices);
+	free(csr_values);
+	
+	clReleaseMemObject(ocl_csr_rowoffsets);
+	clReleaseMemObject(ocl_csr_colindices);
+	clReleaseMemObject(ocl_csr_values);
+	clReleaseMemObject(ocl_x_vector);
+	clReleaseMemObject(ocl_result_vector);
+
+	// clReleaseMemObject(ocl_x);
+	// clReleaseMemObject(ocl_y);
+	// clReleaseMemObject(ocl_result);
 	
   clReleaseProgram(prog);
   clReleaseCommandQueue(my_queue);
@@ -320,8 +352,8 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	
 }
 
-
-
+// ___________________________ Main _______________________________________
+// ________________________________________________________________________
 
 int main()
 {
