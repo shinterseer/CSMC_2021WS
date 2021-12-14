@@ -35,54 +35,7 @@ typedef double       ScalarType;
 
 
 // const char *my_opencl_program = ""
-// "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
-// ""
-// "__kernel void vec_add(__global double *x,\n"
-// "                      __global double *y,\n"
-// "                      __global double *result,\n"
-// "                      unsigned int N\n)"
-// "{\n"
-// "	__local double shared_dotp[256];\n"
-// "  double thread_dotp = 0;\n"
-// "  for (unsigned int i  = get_global_id(0);\n"
-// "                    i  < N;\n"
-// "                    i += get_global_size(0))\n"
-// "    thread_dotp += x[i] * y[i];\n"
-// "	shared_dotp[get_local_id(0)] = thread_dotp;\n"
-// "	// now the reduction\n"
-// "	for(int stride = get_local_size(0)/2; stride>0; stride/=2){\n"
-// "		barrier(CLK_GLOBAL_MEM_FENCE);\n"
-// "		if (get_local_id(0) < stride){\n"
-// "			shared_dotp[get_local_id(0)] += shared_dotp[get_local_id(0) + stride];\n"
-// "		}\n"
-// "	}\n"
-// "	barrier(CLK_GLOBAL_MEM_FENCE);	\n"	
-// "    if (get_local_id(0) == 0)\n"
-// "		   result[get_group_id(0)] = shared_dotp[0];\n"
-// "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
-
-
-// const char *my_opencl_program = ""
-// "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
-// ""
-// "__kernel void vec_add( unsigned int N,\n"
-// "                       __global int *csr_rowoffsets,\n"
-// "                       __global int *csr_colindices,\n"
-// "                       __global double *csr_values,\n"
-// "                       __global double *vector,\n"
-// "                       __global double *result)\n"
-// "{\n"
-// "  for (size_t i=0; i<N; ++i) {\n"
-// "    double value = 0;\n"
-// "    for (size_t j=csr_rowoffsets[i]; j<csr_rowoffsets[i+1]; ++j)\n"
-// "      value += csr_values[j] * vector[csr_colindices[j]];\n"
-// "\n"
-// "    result[i] = value;\n"
-// "  }\n"
-// "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
-
-
-const char *my_opencl_program = ""
+const char *ocl_sparse_matvec1 = ""
 "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
 ""
 "__kernel void vec_add( unsigned int N,\n"
@@ -98,6 +51,43 @@ const char *my_opencl_program = ""
 "      value += csr_values[j] * vector[csr_colindices[j]];\n"
 "\n"
 "    result[i] = value;\n"
+"  }\n"
+"}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
+
+
+
+// const char *my_opencl_program = ""
+const char *ocl_sparse_matvec2 = ""
+"#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n"    // required to enable 'double' inside OpenCL programs
+""
+"__kernel void vec_add( unsigned int N,\n"
+"                       __global int *csr_rowoffsets,\n"
+"                       __global int *csr_colindices,\n"
+"                       __global double *csr_values,\n"
+"                       __global double *vector,\n"
+"                       __global double *result)\n"
+"{\n"
+"	__local double shared_value[256];\n"
+"\n"
+"  for (size_t i=get_group_id(0); i<N; i += get_num_groups(0)) {\n"
+"    // double value = 0;\n"
+"		shared_value[get_local_id(0)] = 0; \n"
+"    for (size_t j=csr_rowoffsets[i]+get_local_id(0); j<csr_rowoffsets[i+1]; j += get_local_size(0))\n"
+"      // value += csr_values[j] * vector[csr_colindices[j]];\n"
+"      shared_value[get_local_id(0)] += csr_values[j] * vector[csr_colindices[j]];\n"
+"\n"
+"		// now the reduction\n"
+"		for(int stride = get_local_size(0)/2; stride>0; stride/=2){\n"
+"			barrier(CLK_GLOBAL_MEM_FENCE);\n"
+"			if (get_local_id(0) < stride){\n"
+"				shared_value[get_local_id(0)] += shared_value[get_local_id(0) + stride];\n"
+"			}\n"
+"		}\n"
+"		barrier(CLK_GLOBAL_MEM_FENCE);	\n"	
+"		\n"
+"    // result[i] = value;\n"
+"		if (get_local_id(0) == 0)\n"
+"			result[i] = shared_value[0];\n"
 "  }\n"
 "}";  // you can have multiple kernels within a single OpenCL program. For simplicity, this OpenCL program contains only a single kernel.
 
@@ -137,17 +127,13 @@ double compare_vectors(std::vector<double> v1, std::vector<double> v2)
 
 
 int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
-                      void (*generate_matrix)(size_t, int*, int*, double*)) // function pointer parameter
+                      void (*generate_matrix)(size_t, int*, int*, double*), const char *&my_opencl_program, 
+											bool compute_on_gpu = true, bool sanity_check = false, int repetitions = 10)
 {
 	
 	size_t grid_size = GRID_SIZE;
   size_t local_size = BLOCK_SIZE;
 	size_t global_size = GRID_SIZE * BLOCK_SIZE;
-
-	bool compute_on_gpu = false;
-	bool sanity_check = false;
-	int repetitions = 10;
-	bool dotp = false;
 
 
   //
@@ -197,12 +183,13 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
   /////////////////////////// Part 2: Create a program and extract kernels ///////////////////////////////////
   //
 
-  Timer timer;
-  // timer.reset();
 
   //
   // Build the program:
   //
+	
+	
+	// const char *& my_opencl_program = ocl_sparse_matvec1;
   size_t source_len = std::string(my_opencl_program).length();
   cl_program prog = clCreateProgramWithSource(my_context, 1, &my_opencl_program, &source_len, &err);OPENCL_ERR_CHECK(err);
   err = clBuildProgram(prog, 0, NULL, NULL, NULL, NULL);
@@ -228,7 +215,6 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
   // Extract the only kernel in the program:
   //
   cl_kernel my_kernel = clCreateKernel(prog, "vec_add", &err); OPENCL_ERR_CHECK(err);
-  // std::cout << "Time to compile and create kernel: " << timer.get() << std::endl;
 
 		
 		
@@ -256,7 +242,8 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	//
 	// fill CSR matrix with values
 	//
-	generate_fdm_laplace(points_per_direction, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0]);		
+	// generate_fdm_laplace(points_per_direction, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0]);		
+	generate_matrix(points_per_direction, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0]);		
 		
 	//
 	// Now set up OpenCL buffers:
@@ -288,6 +275,7 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	//
 	std::vector<double> execution_times_gpu;
 	std::vector<double> execution_times_cpu;
+  Timer timer;	
 	for(int i = 0; i < repetitions; i++){
 		timer.reset();
 		
@@ -351,8 +339,20 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 
 int main()
 {
-	std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960, 1920, 3840};	
+	Timer main_timer;
+	main_timer.reset();
+	bool compute_on_gpu = true;
+	bool sanity_check = false;
+	int repetitions = 10;
+	const char *& my_opencl_program = ocl_sparse_matvec1;
+	int max_nonzeros_per_row = 2000;
+	
+	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960, 1920, 3840};	
+	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960, 1920};	
+	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960};	
+	std::vector<size_t> points_per_direction = {30, 60, 120};	
 	std::cout << "computing sparse matrix-vector product" << std::endl;
+	std::cout << "computation on gpu: " << compute_on_gpu << std::endl;
 	std::cout << "configuration: " << GRID_SIZE << " x " << BLOCK_SIZE << std::endl;
 	std::cout << "points per direction:" << std::endl;
 	for(size_t& size : points_per_direction)
@@ -362,9 +362,14 @@ int main()
 	std::cout << "vector size; execution time OpenCL; execution time CPU" << std::endl;
 
 	for(size_t i = 0; i < points_per_direction.size(); ++i){
-		benchmark_matvec(points_per_direction[i],5,generate_fdm_laplace);
+		// benchmark_matvec(points_per_direction[i],5,generate_fdm_laplace, compute_on_gpu, sanity_check, repetitions);
+		benchmark_matvec(points_per_direction[i],max_nonzeros_per_row,
+										 generate_matrix2, my_opencl_program, 
+										 compute_on_gpu, sanity_check, repetitions);
 	}
 	
+	
+	std::cout << "total execution time of main(): " << main_timer.get() << std::endl;
 	
   return EXIT_SUCCESS;
 }
