@@ -344,13 +344,20 @@ int main()
 	bool compute_on_gpu = true;
 	bool sanity_check = false;
 	int repetitions = 10;
-	const char *& my_opencl_program = ocl_sparse_matvec1;
+	// const char *& my_opencl_program = ocl_sparse_matvec1;
+	const char *& my_opencl_program = ocl_sparse_matvec2;
+	
+	// void (*matrix_generator)(size_t, int*, int*, double*) = generate_fdm_laplace;
+	void (*matrix_generator)(size_t, int*, int*, double*) = generate_matrix2;
 	int max_nonzeros_per_row = 2000;
 	
 	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960, 1920, 3840};	
 	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960, 1920};	
 	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960};	
-	std::vector<size_t> points_per_direction = {30, 60, 120};	
+	// std::vector<size_t> points_per_direction = {30, 60, 120};	
+	std::vector<size_t> points_per_direction = {40, 80, 160};	
+	// std::vector<size_t> points_per_direction = {50, 100, 200};	
+
 	std::cout << "computing sparse matrix-vector product" << std::endl;
 	std::cout << "computation on gpu: " << compute_on_gpu << std::endl;
 	std::cout << "configuration: " << GRID_SIZE << " x " << BLOCK_SIZE << std::endl;
@@ -364,12 +371,12 @@ int main()
 	for(size_t i = 0; i < points_per_direction.size(); ++i){
 		// benchmark_matvec(points_per_direction[i],5,generate_fdm_laplace, compute_on_gpu, sanity_check, repetitions);
 		benchmark_matvec(points_per_direction[i],max_nonzeros_per_row,
-										 generate_matrix2, my_opencl_program, 
+										 matrix_generator, my_opencl_program, 
 										 compute_on_gpu, sanity_check, repetitions);
 	}
 	
 	
-	std::cout << "total execution time of main(): " << main_timer.get() << std::endl;
+	std::cout << "total execution time of main() in s: " << main_timer.get() << std::endl;
 	
   return EXIT_SUCCESS;
 }
