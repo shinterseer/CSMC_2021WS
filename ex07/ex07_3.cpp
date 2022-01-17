@@ -242,7 +242,6 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	//
 	// fill CSR matrix with values
 	//
-	// generate_fdm_laplace(points_per_direction, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0]);		
 	generate_matrix(points_per_direction, &csr_rowoffsets[0], &csr_colindices[0], &csr_values[0]);		
 		
 	//
@@ -319,13 +318,13 @@ int benchmark_matvec(size_t points_per_direction, size_t max_nonzeros_per_row,
 	// cleanup
 	//
 
-	// no need to release host vectors because std::vector was used
+	// no need to clean up host arrays because std::vector was used
+	// clean up device arrays
 	clReleaseMemObject(ocl_csr_rowoffsets);
 	clReleaseMemObject(ocl_csr_colindices);
 	clReleaseMemObject(ocl_csr_values);
 	clReleaseMemObject(ocl_x_vector);
 	clReleaseMemObject(ocl_result_vector);
-
 	
   clReleaseProgram(prog);
   clReleaseCommandQueue(my_queue);
@@ -355,8 +354,8 @@ int main()
 	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960, 1920};	
 	// std::vector<size_t> points_per_direction = {30, 60, 120, 240, 480, 960};	
 	// std::vector<size_t> points_per_direction = {30, 60, 120};	
-	std::vector<size_t> points_per_direction = {40, 80, 160};	
-	// std::vector<size_t> points_per_direction = {50, 100, 200};	
+	// std::vector<size_t> points_per_direction = {40, 80, 160};	
+	std::vector<size_t> points_per_direction = {50, 100, 200};	
 
 	std::cout << "computing sparse matrix-vector product" << std::endl;
 	std::cout << "computation on gpu: " << compute_on_gpu << std::endl;
@@ -369,7 +368,6 @@ int main()
 	std::cout << "vector size; execution time OpenCL; execution time CPU" << std::endl;
 
 	for(size_t i = 0; i < points_per_direction.size(); ++i){
-		// benchmark_matvec(points_per_direction[i],5,generate_fdm_laplace, compute_on_gpu, sanity_check, repetitions);
 		benchmark_matvec(points_per_direction[i],max_nonzeros_per_row,
 										 matrix_generator, my_opencl_program, 
 										 compute_on_gpu, sanity_check, repetitions);
