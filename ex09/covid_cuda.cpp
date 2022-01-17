@@ -21,8 +21,8 @@
 #define BLOCK_SIZE 256
 // #define SIM_DAYS 365
 
-// #define POP_SIZE 8916845
-#define POP_SIZE 10000
+#define POP_SIZE 8916845
+// #define POP_SIZE 10000
 #define RP_SIZE 10000
 
 #define R_MAX 4294967296
@@ -47,8 +47,6 @@ typedef struct
   int immunity_duration;     // Number of days a recovered person is immune
 
   // for each day:
-  // int    *contacts_per_day;           // number of other persons met each day to whom the disease may be passed on
-  // double *transmission_probability;   // how likely it is to pass on the infection to another person
   int    contacts_per_day[365];           // number of other persons met each day to whom the disease may be passed on
   double transmission_probability[365];   // how likely it is to pass on the infection to another person
 
@@ -65,8 +63,6 @@ void init_input(SimInput_t *input)
   input->starting_infections = 10;
   input->immunity_duration   = 180;   // half a year of immunity
 
-  // input->contacts_per_day = (int*)malloc(sizeof(int) * 365);
-  // input->transmission_probability = (double*)malloc(sizeof(double) * 365);
   for (int day = 0; day < 365; ++day) {
     input->contacts_per_day[day] = 6;             // arbitrary assumption of six possible transmission contacts per person per day, all year
     input->transmission_probability[day] = 0.2
@@ -106,6 +102,7 @@ void init_output(SimOutput_t *output, int population_size)
 }
 
 
+
 __global__ 
 void step1_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* device_infected_on,
 							 int* device_num_infected_current, int* device_num_recovered_current){
@@ -113,41 +110,51 @@ void step1_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 	int thread_idx_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x*gridDim.x;
 	
-	int local_infected = 0;
-	int local_recovered = 0;
+	__shared__ int local_infected[BLOCK_SIZE];
+	__shared__ int local_recovered[BLOCK_SIZE];
 	
-	
-	// printf("day: %i\n", day);
+	local_infected[threadIdx.x] = 0;
+	local_recovered[threadIdx.x] = 0;
+		
 	for (int i = thread_idx_global; i < device_input->population_size; i += num_threads) {	
 		if (device_is_infected[i] > 0)
 		{
 			if (device_infected_on[i] > day - device_input->infection_delay - device_input->infection_days
 				 && device_infected_on[i] <= day - device_input->infection_delay)   // currently infected and incubation period over
-				// *device_num_infected_current += 1;
-				local_infected += 1;
+				local_infected[threadIdx.x] += 1;
 			else if (device_infected_on[i] < day - device_input->infection_delay - device_input->infection_days)
-				// *device_num_recovered_current += 1;
-				local_recovered += 1;
+				local_recovered[threadIdx.x] += 1;
 		}
 	}
-	atomicAdd(device_num_infected_current, local_infected);
-	atomicAdd(device_num_recovered_current, local_recovered);
-	// printf("device_num_infected_current: %i\n", *device_num_infected_current);
-	// printf("device_num_recovered_current: %i\n", *device_num_recovered_current);	
+	
+	// now the reduction
+	for(int stride = blockDim.x/2; stride>0; stride/=2){
+		__syncthreads();
+		if (threadIdx.x < stride){
+			local_infected[threadIdx.x] += local_infected[threadIdx.x + stride];
+			local_recovered[threadIdx.x] += local_recovered[threadIdx.x + stride];
+		}
+	}
+		
+	if (threadIdx.x == 0){
+		atomicAdd(device_num_infected_current, local_infected[0]);
+		atomicAdd(device_num_recovered_current, local_recovered[0]);		
+	}
 }
 
 
 __global__
 void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* device_infected_on,
-							 int contacts_today, double transmission_probability_today, int* device_random_number){
+							 int contacts_today, double transmission_probability_today, int* device_random_number,
+							 int *device_num_infected_current, int *device_num_recovered_current){
 
 	int thread_idx_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x*gridDim.x;
 
-	unsigned int random_int;
-	
+	unsigned int random_int;	
 	double r;
-	for (int i=0; i<device_input->population_size; ++i) // loop over population
+	
+	for (int i = thread_idx_global; i < device_input->population_size; i += num_threads) // loop over population
 	{
 		if (   device_is_infected[i] > 0
 				&& device_infected_on[i] > day - device_input->infection_delay - device_input->infection_days  // currently infected
@@ -156,12 +163,9 @@ void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 			// pass on infection to other persons with transmission probability
 			for (int j = 0; j < contacts_today; ++j)
 			{
-				// double r = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
 				random_int = (R_A*device_random_number[thread_idx_global] + R_C) % R_MAX;
 				device_random_number[thread_idx_global] = random_int;
 				r = double(random_int) / R_MAX;
-				// printf("r: %f\n", r);
-				// local_rand_counter++;
 				
 				if (r < transmission_probability_today)
 				{
@@ -173,31 +177,16 @@ void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 						device_infected_on[other_person] = day;
 					}
 				}
-
 			} // for contacts_per_day
 		} // if currently infected
 	} // for i
-
-}
-
-
-
-
-
-
-
-__global__ 
-void test_struct(SimInput_t *device_input){
-	int thread_idx_global = blockIdx.x*blockDim.x + threadIdx.x;
+	
+	// initialize for other kernel
 	if (thread_idx_global == 0){
-		printf("population_size on gpu: %i\n",device_input->population_size);
-		printf("population_size on gpu: %u\n",device_input->population_size);
-		printf("starting_infections on gpu: %i\n",device_input->starting_infections);
-		printf("transmission_probability[0] on gpu: %f\n",device_input->transmission_probability[0]);
-		printf("transmission_probability[90] on gpu: %f\n",device_input->transmission_probability[90]);
-		printf("transmission_probability[180] on gpu: %f\n",device_input->transmission_probability[180]);
-		printf("transmission_probability[270] on gpu: %f\n",device_input->transmission_probability[270]);
+		*device_num_infected_current = 0;
+		*device_num_recovered_current = 0;
 	}
+
 }
 
 
@@ -212,7 +201,6 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output, int sim_days =
   }
 	int num_infected_current = 0;
 	int num_recovered_current = 0;
-	int zero = 0;
 	double random_pool[RP_SIZE];
 	for(int i = 0; i < RP_SIZE; ++i)
 		random_pool[i] = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
@@ -226,35 +214,28 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output, int sim_days =
 	int *device_num_infected_current, *device_num_recovered_current;
 	cudaMalloc(&device_num_infected_current, sizeof(int));
 	cudaMalloc(&device_num_recovered_current, sizeof(int));
-	double *device_random_pool;
-	cudaMalloc(&device_random_pool, RP_SIZE*sizeof(double));
 
 	int *device_random_number;
 	cudaMalloc(&device_random_number, GRID_SIZE*BLOCK_SIZE*sizeof(int));
+
+	// initialize random numbers on cpu
 	int random_number[GRID_SIZE*BLOCK_SIZE];
 	for(int i = 0; i < GRID_SIZE*BLOCK_SIZE; ++i)
 		random_number[i] = i;
-
 
 	
 	SimInput_t *device_input;	
 	cudaMalloc(&device_input, sizeof(SimInput_t));
 	
-	
 	//
   // move data to gpu
   //	
 	cudaMemcpy(device_input, input, sizeof(SimInput_t), cudaMemcpyHostToDevice);
-	cudaMemcpy(device_random_pool, random_pool, sizeof(SimInput_t), cudaMemcpyHostToDevice);
 	cudaMemcpy(device_random_number, random_number, GRID_SIZE*BLOCK_SIZE*sizeof(int), cudaMemcpyHostToDevice);
-
 	cudaMemcpy(device_is_infected, output->is_infected, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
 	cudaMemcpy(device_infected_on, output->infected_on, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
 
 	
-	// test_struct<<<GRID_SIZE,BLOCK_SIZE>>>(device_input);
-	// cudaDeviceSynchronize();
-
   //
   // Run simulation
   //
@@ -263,22 +244,6 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output, int sim_days =
     //
     // Step 1: determine number of infections and recoveries
     //
-    // for (int i=0; i<input->population_size; ++i) {
-
-      // if (output->is_infected[i] > 0)
-      // {
-        // if (output->infected_on[i] > day - input->infection_delay - input->infection_days
-           // && output->infected_on[i] <= day - input->infection_delay)   // currently infected and incubation period over
-          // num_infected_current += 1;
-        // else if (output->infected_on[i] < day - input->infection_delay - input->infection_days)
-          // num_recovered_current += 1;
-      // }
-    // }
-
-		// launch step1 kernel
-		
-		cudaMemcpy(device_num_infected_current, &zero, sizeof(int), cudaMemcpyHostToDevice);
-		cudaMemcpy(device_num_recovered_current, &zero, sizeof(int), cudaMemcpyHostToDevice);
 		step1_gpu<<<GRID_SIZE,BLOCK_SIZE>>>(day, device_input, device_is_infected, device_infected_on,
 												device_num_infected_current, device_num_recovered_current);
 		// copy back num_infected_current and num_recovered_current
@@ -310,49 +275,23 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output, int sim_days =
       contacts_today /= 4;
     }
 
-
     //
     // Step 3: pass on infections within population
     //
-    for (int i=0; i<input->population_size; ++i) // loop over population
-    {
-      if (   output->is_infected[i] > 0
-          && output->infected_on[i] > day - input->infection_delay - input->infection_days  // currently infected
-          && output->infected_on[i] <= day - input->infection_delay)                         // already infectious
-      {
-        // pass on infection to other persons with transmission probability
-        for (int j=0; j<contacts_today; ++j)
-        {
-          double r = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
-          if (r < transmission_probability_today)
-          {
-            int other_person = r * input->population_size;
-            if (output->is_infected[other_person] == 0
-               || output->infected_on[other_person] < day - input->immunity_duration)
-            {
-              output->is_infected[other_person] = 1;
-              output->infected_on[other_person] = day;
-            }
-          }
-
-        } // for contacts_per_day
-      } // if currently infected
-    } // for i
-
-		step3_gpu<<<1,1>>>(day, device_input, device_is_infected, device_infected_on,
-								 contacts_today, transmission_probability_today, device_random_number);
-
-		// cudaMemcpy(device_is_infected, output->is_infected, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
-		// cudaMemcpy(device_infected_on, output->infected_on, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
-
+		step3_gpu<<<GRID_SIZE,BLOCK_SIZE>>>(day, device_input, device_is_infected, device_infected_on,
+								 contacts_today, transmission_probability_today, device_random_number,
+								 device_num_recovered_current, device_num_infected_current);
 
   } // for day
 
 	cudaFree(device_input);
-
-
+	cudaFree(device_is_infected);
+	cudaFree(device_infected_on);
+	cudaFree(device_num_infected_current);
+	cudaFree(device_num_recovered_current);
+	cudaFree(device_random_number);
+	
 }
-
 
 
 
@@ -367,8 +306,10 @@ int main(int argc, char **argv) {
   Timer timer;
   srand(0); // initialize random seed for deterministic output
   timer.reset();
-  run_simulation(&input, &output, 30);
+  run_simulation(&input, &output, 365);
   printf("Simulation time: %g\n", timer.get());
+
+	cudaDeviceReset();  // for CUDA leak checker to work
 
   return EXIT_SUCCESS;
 }
