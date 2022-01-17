@@ -25,7 +25,9 @@
 #define POP_SIZE 10000
 #define RP_SIZE 10000
 
-
+#define R_MAX 4294967296
+#define R_A 1664525
+#define R_C 1013904223
 
 
 //
@@ -137,13 +139,13 @@ void step1_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 
 __global__
 void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* device_infected_on,
-							 int contacts_today, double transmission_probability_today, double* device_random_pool){
+							 int contacts_today, double transmission_probability_today, int* device_random_number){
 
 	int thread_idx_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x*gridDim.x;
 
-
-	int local_rand_counter = 0;
+	unsigned int random_int;
+	
 	double r;
 	for (int i=0; i<device_input->population_size; ++i) // loop over population
 	{
@@ -155,9 +157,11 @@ void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 			for (int j = 0; j < contacts_today; ++j)
 			{
 				// double r = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
-				r = device_random_pool[thread_idx_global+local_rand_counter % RP_SIZE];
+				random_int = (R_A*device_random_number[thread_idx_global] + R_C) % R_MAX;
+				device_random_number[thread_idx_global] = random_int;
+				r = double(random_int) / R_MAX;
 				// printf("r: %f\n", r);
-				local_rand_counter++;
+				// local_rand_counter++;
 				
 				if (r < transmission_probability_today)
 				{
@@ -224,6 +228,14 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output, int sim_days =
 	cudaMalloc(&device_num_recovered_current, sizeof(int));
 	double *device_random_pool;
 	cudaMalloc(&device_random_pool, RP_SIZE*sizeof(double));
+
+	int *device_random_number;
+	cudaMalloc(&device_random_number, GRID_SIZE*BLOCK_SIZE*sizeof(int));
+	int random_number[GRID_SIZE*BLOCK_SIZE];
+	for(int i = 0; i < GRID_SIZE*BLOCK_SIZE; ++i)
+		random_number[i] = i;
+
+
 	
 	SimInput_t *device_input;	
 	cudaMalloc(&device_input, sizeof(SimInput_t));
@@ -234,6 +246,7 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output, int sim_days =
   //	
 	cudaMemcpy(device_input, input, sizeof(SimInput_t), cudaMemcpyHostToDevice);
 	cudaMemcpy(device_random_pool, random_pool, sizeof(SimInput_t), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_random_number, random_number, GRID_SIZE*BLOCK_SIZE*sizeof(int), cudaMemcpyHostToDevice);
 
 	cudaMemcpy(device_is_infected, output->is_infected, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
 	cudaMemcpy(device_infected_on, output->infected_on, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
@@ -327,7 +340,7 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output, int sim_days =
     } // for i
 
 		step3_gpu<<<1,1>>>(day, device_input, device_is_infected, device_infected_on,
-								 contacts_today, transmission_probability_today, device_random_pool);
+								 contacts_today, transmission_probability_today, device_random_number);
 
 		// cudaMemcpy(device_is_infected, output->is_infected, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
 		// cudaMemcpy(device_infected_on, output->infected_on, input->population_size*sizeof(int), cudaMemcpyHostToDevice);
