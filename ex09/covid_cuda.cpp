@@ -22,7 +22,7 @@
 // #define SIM_DAYS 365
 
 #define POP_SIZE 8916845
-// #define POP_SIZE 10000
+// #define POP_SIZE 100
 
 // random number generator constants
 #define R_MAX 4294967296
@@ -266,14 +266,15 @@ void init_gpu(int *device_is_infected, int *device_infected_on,
 {
 	int thread_idx_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x*gridDim.x;
-	
+		
 	for (int i = thread_idx_global; i < population_size; i += num_threads){
 		// init large arrays
     device_is_infected[i] = (i < starting_infections) ? 1 : 0;
     device_infected_on[i] = (i < starting_infections) ? 0 : -1;
-		// init random number seeds
-    device_random_number[i] = i;
   }
+
+	// init random number seeds
+  device_random_number[thread_idx_global] = thread_idx_global;
 
 	// init for first iteration
 	if (thread_idx_global == 0){
@@ -308,12 +309,8 @@ void run_simulation(int sim_days = 365)
 
 	unsigned int *device_random_number;
 	cudaMalloc(&device_random_number, GRID_SIZE*BLOCK_SIZE*sizeof(unsigned int));
-	// initialize seeds for random numbers on cpu
-	// unsigned int random_number[GRID_SIZE*BLOCK_SIZE];
-	// for(int i = 0; i < GRID_SIZE*BLOCK_SIZE; ++i)
-		// random_number[i] = i;
 
-
+	cudaDeviceSynchronize();
 	init_gpu<<<GRID_SIZE,BLOCK_SIZE>>>(device_is_infected,device_infected_on,
 																		 device_num_infected_current,device_num_recovered_current, device_random_number,
 																		 input.population_size,input.starting_infections);
@@ -327,8 +324,6 @@ void run_simulation(int sim_days = 365)
   // move data to gpu
   //	
 	cudaMemcpy(device_input, &input, sizeof(SimInput_t), cudaMemcpyHostToDevice);
-	// cudaMemcpy(device_random_number, random_number, GRID_SIZE*BLOCK_SIZE*sizeof(unsigned int), cudaMemcpyHostToDevice);
-
 	
   //
   // Run simulation
