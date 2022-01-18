@@ -45,7 +45,7 @@
 
 // least common multiple seeems to be
 // according to https://www.calculatorsoup.com/calculators/math/lcd.php
-// 9222527599039741952
+// 9222527599039741952 ~= 2^63
 
 // from wikipedia (borland Delphi, Virtual Pascal) mod
 // #define R_MAX3 4294967293
@@ -101,7 +101,7 @@ void init_input(SimInput_t *input)
   input->infection_days      = 3;     // assume three days of passing on the disease
   input->starting_infections = 10;
   input->immunity_duration   = 180;   // half a year of immunity
-	input->lockdown_discipline = 0.7; // 1: lockdowns are always respected, 0: ld always ignored
+	input->lockdown_discipline = 1; // 1: lockdowns are always respected, 0: ld always ignored
 
   for (int day = 0; day < 365; ++day) {
     input->contacts_per_day[day] = 6;             // arbitrary assumption of six possible transmission contacts per person per day, all year
@@ -481,9 +481,7 @@ int main(int argc, char **argv) {
   // init_output(&output, input.population_size);
 
   Timer timer;
-  // srand(0); // initialize random seed for deterministic output
   timer.reset();
-  // run_simulation(&input, &output, 365);	
 	// rng_test();
   run_simulation();
   printf("Simulation time: %g\n", timer.get());
