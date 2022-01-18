@@ -25,15 +25,47 @@
 // #define POP_SIZE 100
 
 // random number generator constants
-#define R_MAX 4294967296
-#define R_A 1664525
-#define R_C 1013904223
 
-// these constants give nice distribution but awful simulation
-// #define R_MAX 65537
-// #define R_A 75
-// #define R_C 74
 
+
+// from wikipedia (numerical recipes)
+#define R_MAX1 4294967296
+#define R_A1 1664525
+#define R_C1 1013904223
+
+// from wikipedia (borland C/C++) mod
+#define R_MAX2 4294967290
+#define R_A2 22695477
+#define R_C2 1
+
+// wikipedia (ZX81)
+#define R_MAX3 65537
+#define R_A3 75
+#define R_C3 74
+
+// least common multiple seeems to be
+// according to https://www.calculatorsoup.com/calculators/math/lcd.php
+// 9222527599039741952
+
+// from wikipedia (borland Delphi, Virtual Pascal) mod
+// #define R_MAX3 4294967293
+// #define R_A3 134775813
+// #define R_C3 1
+
+// from wikipedia (borland C/C++)
+// #define R_MAX2 4294967296
+// #define R_A2 22695477
+// #define R_C2 1
+
+// from wikipedia (borland Delphi, Virtual Pascal)
+// #define R_MAX3 4294967296
+// #define R_A3 134775813
+// #define R_C3 1
+
+// awful constants from wu.ac.at
+// #define R_MAX 2147483647
+// #define R_A 950706376  
+// #define R_C 0
 
 
 //
@@ -69,7 +101,7 @@ void init_input(SimInput_t *input)
   input->infection_days      = 3;     // assume three days of passing on the disease
   input->starting_infections = 10;
   input->immunity_duration   = 180;   // half a year of immunity
-	input->lockdown_discipline = 0.95; // 1: lockdowns are always respected, 0: ld always ignored
+	input->lockdown_discipline = 0.7; // 1: lockdowns are always respected, 0: ld always ignored
 
   for (int day = 0; day < 365; ++day) {
     input->contacts_per_day[day] = 6;             // arbitrary assumption of six possible transmission contacts per person per day, all year
@@ -151,6 +183,36 @@ void step1_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 	}
 }
 
+__device__
+inline void myLCG1(unsigned int *address){
+	*address = (R_A1*(*address) + R_C1) % R_MAX1;
+}
+
+__device__
+inline void myLCG2(unsigned int *address){
+	*address = (R_A2*(*address) + R_C2) % R_MAX2;
+}
+
+__device__
+inline void myLCG3(unsigned int *address){
+	*address = (R_A3*(*address) + R_C3) % R_MAX3;
+}
+
+__device__
+inline double myRNG(unsigned int *first_address){	
+  // This combines three LCG
+	// update random integers
+	myLCG1(first_address+0);
+	myLCG2(first_address+1);
+	myLCG3(first_address+2);
+	// get sum of random numbers (each between 0 and 1)
+  double r = double(*(first_address+0))/R_MAX1 + 
+						 double(*(first_address+1))/R_MAX2 + 
+						 double(*(first_address+2))/R_MAX3;
+	
+	// return fmod(r,1);
+	return r - int(r);
+}
 
 __global__
 void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* device_infected_on,
@@ -160,7 +222,7 @@ void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 	int thread_idx_global = blockIdx.x*blockDim.x + threadIdx.x;
 	int num_threads = blockDim.x*gridDim.x;
 
-	unsigned int random_int;	
+	// unsigned int random_int;	
 	double r;
 	
 	for (int i = thread_idx_global; i < device_input->population_size; i += num_threads) // loop over population
@@ -172,9 +234,7 @@ void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 			// pass on infection to other persons with transmission probability
 			for (int j = 0; j < contacts_today; ++j)
 			{
-				random_int = (R_A*device_random_number[thread_idx_global] + R_C) % R_MAX;
-				device_random_number[thread_idx_global] = random_int;
-				r = double(random_int) / R_MAX;
+				r = myRNG(&device_random_number[3*thread_idx_global]);
 				
 				if (r < transmission_probability_today)
 				{
@@ -195,9 +255,7 @@ void step3_gpu(int day, SimInput_t *device_input, int* device_is_infected, int* 
 		*device_num_infected_current = 0;
 		*device_num_recovered_current = 0;
 	}
-
 }
-
 
 __global__
 void step3_gpu_mod(int day, SimInput_t *device_input, int* device_is_infected, int* device_infected_on,
@@ -212,31 +270,25 @@ void step3_gpu_mod(int day, SimInput_t *device_input, int* device_is_infected, i
 	
 	double contact_ratio = 1.0;
 	if (lockdown)
-		contact_ratio = 0.25;
-	// if ((thread_idx_global == 0) && lockdown)
-		// printf("its lockdown\n");
-	
+		contact_ratio = 0.25;	
 	
 	for (int i = thread_idx_global; i < device_input->population_size; i += num_threads) // loop over population
 	{
-		// roll the dice, whether the person will respect a lockdown
-		random_int = (R_A*device_random_number[thread_idx_global] + R_C) % R_MAX;
-		device_random_number[thread_idx_global] = random_int;
-		r = double(random_int) / R_MAX;
-		if (r > device_input->lockdown_discipline)
-			contact_ratio = 1.0;
-
 		if (   device_is_infected[i] > 0
 				&& device_infected_on[i] > day - device_input->infection_delay - device_input->infection_days  // currently infected
 				&& device_infected_on[i] <= day - device_input->infection_delay)                         // already infectious
 		{
+			// roll the dice, whether the person will respect a lockdown
+			r = myRNG(&device_random_number[3*thread_idx_global]);
+			if (r > device_input->lockdown_discipline)
+				contact_ratio = 1.0;
+
+
 			// pass on infection to other persons with transmission probability
 			for (int j = 0; j < (device_input->contacts_per_day[day])*contact_ratio; ++j)
 			{
-				random_int = (R_A*device_random_number[thread_idx_global] + R_C) % R_MAX;
-				device_random_number[thread_idx_global] = random_int;
-				r = double(random_int) / R_MAX;
-				
+				r = myRNG(&device_random_number[3*thread_idx_global]);
+
 				if (r < transmission_probability_today)
 				{
 					int other_person = r * device_input->population_size;
@@ -274,7 +326,9 @@ void init_gpu(int *device_is_infected, int *device_infected_on,
   }
 
 	// init random number seeds
-  device_random_number[thread_idx_global] = thread_idx_global;
+  device_random_number[3*thread_idx_global] = thread_idx_global;
+  device_random_number[3*thread_idx_global+1] = thread_idx_global;
+  device_random_number[3*thread_idx_global+2] = thread_idx_global;
 
 	// init for first iteration
 	if (thread_idx_global == 0){
@@ -308,7 +362,7 @@ void run_simulation(int sim_days = 365)
 	cudaMalloc(&device_num_recovered_current, sizeof(int));
 
 	unsigned int *device_random_number;
-	cudaMalloc(&device_random_number, GRID_SIZE*BLOCK_SIZE*sizeof(unsigned int));
+	cudaMalloc(&device_random_number, GRID_SIZE*BLOCK_SIZE*3*sizeof(unsigned int));
 
 	cudaDeviceSynchronize();
 	init_gpu<<<GRID_SIZE,BLOCK_SIZE>>>(device_is_infected,device_infected_on,
@@ -387,15 +441,15 @@ void run_simulation(int sim_days = 365)
 
 void rng_test(int reps = 100000){
 	unsigned int seed = 0;
-	unsigned int r_int = (R_A*seed + R_C) % R_MAX;
+	unsigned int r_int = (R_A1*seed + R_C1) % R_MAX1;
 
 	constexpr int num_bins = 100;
 	int bins[num_bins] = {0};
 
 	double r;
 	for(int i = 0; i < reps; ++i){
-		r_int = (R_A*r_int + R_C) % R_MAX;
-		r = double(r_int) / R_MAX;
+		r_int = (R_A1*r_int + R_C1) % R_MAX1;
+		r = double(r_int) / R_MAX1;
 		// printf("r: %2.3f\n",r);
 		
 		for(int j = 0; j < num_bins; ++j){
