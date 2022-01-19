@@ -17,6 +17,48 @@
   #define M_PI  3.14159265358979323846
 #endif
 
+
+// from wikipedia (numerical recipes)
+#define R_MAX1 4294967296
+#define R_A1 1664525
+#define R_C1 1013904223
+
+// from wikipedia (borland C/C++) mod
+#define R_MAX2 4294967290
+#define R_A2 22695477
+#define R_C2 1
+
+// wikipedia (ZX81)
+#define R_MAX3 65537
+#define R_A3 75
+#define R_C3 74
+
+// least common multiple seeems to be
+// according to https://www.calculatorsoup.com/calculators/math/lcd.php
+// 9222527599039741952 ~= 2^63
+
+// from wikipedia (borland Delphi, Virtual Pascal) mod
+// #define R_MAX3 4294967293
+// #define R_A3 134775813
+// #define R_C3 1
+
+// from wikipedia (borland C/C++)
+// #define R_MAX2 4294967296
+// #define R_A2 22695477
+// #define R_C2 1
+
+// from wikipedia (borland Delphi, Virtual Pascal)
+// #define R_MAX3 4294967296
+// #define R_A3 134775813
+// #define R_C3 1
+
+// awful constants from wu.ac.at
+// #define R_MAX 2147483647
+// #define R_A 950706376  
+// #define R_C 0
+
+
+
 //
 // Data container for simulation input
 //
@@ -91,11 +133,64 @@ void init_output(SimOutput_t *output, int population_size)
 }
 
 
+inline void myLCG1(unsigned int *address){
+	*address = (R_A1*(*address) + R_C1) % R_MAX1;
+}
+
+inline void myLCG2(unsigned int *address){
+	*address = (R_A2*(*address) + R_C2) % R_MAX2;
+}
+
+inline void myLCG3(unsigned int *address){
+	*address = (R_A3*(*address) + R_C3) % R_MAX3;
+}
+
+inline double myRNG(unsigned int *first_address){	
+  // This combines three LCG
+	// update random integers
+	myLCG1(first_address+0);
+	myLCG2(first_address+1);
+	myLCG3(first_address+2);
+	// get sum of random numbers (each between 0 and 1)
+  double r = double(*(first_address+0))/R_MAX1 + 
+						 double(*(first_address+1))/R_MAX2 + 
+						 double(*(first_address+2))/R_MAX3;
+	
+	// return fmod(r,1);
+	return r - int(r);
+}
+
+inline double myBadRNG(unsigned int *adress){	
+	// update random integers
+	myLCG3(adress);
+	// get sum of random numbers (each between 0 and 1)
+  double r = double(*(adress))/R_MAX3;
+	
+	// return fmod(r,1);
+	return r - int(r);
+}
+
+inline double myMediocreRNG(unsigned int *adress){	
+	// update random integers
+	myLCG1(adress);
+	// get sum of random numbers (each between 0 and 1)
+  double r = double(*(adress))/R_MAX1;
+	
+	// return fmod(r,1);
+	return r - int(r);
+}
+
+
+
+
 void run_simulation(const SimInput_t *input, SimOutput_t *output)
 {
   //
   // Init data
   //
+	unsigned int rand_address;
+	rand_address = 0;
+	
   for (int i=0; i<input->population_size; ++i) {
     output->is_infected[i] = (i < input->starting_infections) ? 1 : 0;
     output->infected_on[i] = (i < input->starting_infections) ? 0 : -1;
@@ -163,7 +258,10 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output)
         // pass on infection to other persons with transmission probability
         for (int j=0; j<contacts_today; ++j)
         {
-          double r = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
+					
+					// double r = myBadRNG(&rand_address);
+					double r = myMediocreRNG(&rand_address);
+          // double r = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
           if (r < transmission_probability_today)
           {
             int other_person = r * input->population_size;
@@ -182,6 +280,8 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output)
   } // for day
 
 }
+
+
 
 
 int main(int argc, char **argv) {
