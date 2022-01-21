@@ -160,6 +160,7 @@ inline double myRNG(unsigned int *first_address){
 	return r - int(r);
 }
 
+
 inline double myBadRNG(unsigned int *adress){	
 	// update random integers
 	myLCG3(adress);
@@ -170,17 +171,28 @@ inline double myBadRNG(unsigned int *adress){
 	return r - int(r);
 }
 
-inline double myMediocreRNG(unsigned int *adress){	
+
+inline double myBadRNG2(unsigned int *adress){	
 	// update random integers
-	myLCG1(adress);
-	// get sum of random numbers (each between 0 and 1)
-  double r = double(*(adress))/R_MAX1;
+	myLCG3(adress);	
+  double r1 = double(*(adress))/R_MAX3;
+  double r2 = double(*(adress))/R_MAX3;
+	double r = r1 + (r2 - .5)/R_MAX3; // "finer grained" random number
+	r = std::abs(r);
+	// printf("r: %8.8f, r1: %8.8f, r2: %8.8f\n",r,r1,r2);
 	
 	// return fmod(r,1);
 	return r - int(r);
 }
 
-
+inline double myMediocreRNG(unsigned int *adress){	
+	// update random integers
+	myLCG1(adress);
+  double r = double(*(adress))/R_MAX1;
+	
+	// return fmod(r,1);
+	return r - int(r);
+}
 
 
 void run_simulation(const SimInput_t *input, SimOutput_t *output)
@@ -260,10 +272,11 @@ void run_simulation(const SimInput_t *input, SimOutput_t *output)
         {
 					
 					// double r = myBadRNG(&rand_address);
-					double r = myMediocreRNG(&rand_address);
-          // double r = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
+					// double r = myMediocreRNG(&rand_address);
+          double r = ((double)rand()) / (double)RAND_MAX;  // random number between 0 and 1
           if (r < transmission_probability_today)
           {
+            // int other_person = r * input->population_size;
             int other_person = r * input->population_size;
             if (output->is_infected[other_person] == 0
                || output->infected_on[other_person] < day - input->immunity_duration)

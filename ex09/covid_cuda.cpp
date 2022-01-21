@@ -91,6 +91,7 @@ typedef struct
 	
 } SimInput_t;
 
+
 void init_input(SimInput_t *input)
 {
   input->population_size = POP_SIZE;  // Austria's population in 2020 according to Statistik Austria
@@ -420,12 +421,12 @@ void run_simulation(int sim_days = 365)
     //
     // Step 3: pass on infections within population
     //
-		// step3_gpu<<<GRID_SIZE,BLOCK_SIZE>>>(day, device_input, device_is_infected, device_infected_on,
-								 // contacts_today, transmission_probability_today, device_random_number,
-								 // device_num_recovered_current, device_num_infected_current);
-		step3_gpu_mod<<<GRID_SIZE,BLOCK_SIZE>>>(day, device_input, device_is_infected, device_infected_on,
-								 output.lockdown[day], transmission_probability_today, device_random_number,
+		step3_gpu<<<GRID_SIZE,BLOCK_SIZE>>>(day, device_input, device_is_infected, device_infected_on,
+								 contacts_today, transmission_probability_today, device_random_number,
 								 device_num_recovered_current, device_num_infected_current);
+		// step3_gpu_mod<<<GRID_SIZE,BLOCK_SIZE>>>(day, device_input, device_is_infected, device_infected_on,
+								 // output.lockdown[day], transmission_probability_today, device_random_number,
+								 // device_num_recovered_current, device_num_infected_current);
 
 
   } // for day
